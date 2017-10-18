@@ -1,0 +1,1 @@
+Removed class ```CMAttribute``` from ````lib.iris.fileformats.rules.py```.
