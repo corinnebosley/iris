@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2016, Met Office
+# (C) British Crown Copyright 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -31,7 +31,7 @@ import numpy as np
 from iris.coords import AuxCoord, DimCoord
 import iris.tests.stock
 
-from iris.analysis.trajectory import interpolate
+from iris.analysis.trajectory import interpolate, nearest_neighbour_indices
 
 
 class TestFailCases(tests.IrisTest):
@@ -179,6 +179,15 @@ class TestNearest(tests.IrisTest):
         result = result[..., 0]
         expected = cube[:, self.single_point_iy, self.single_point_ix]
         self.assertEqual(result, expected)
+
+    def test_nearest_neighbour_indices(self):
+        cube = self.test_cube
+        test_point = self.single_sample_point
+        result = nearest_neighbour_indices(cube, test_point)
+        # Perform minimal checks on nearest_neighbour_indices as most of the
+        # behaviour will be tested for _nearest_neighbour_indices_ndcoords.
+        self.assertEqual(result[0][1], 1)
+        self.assertEqual(result[0][2], 1)
 
 
 if __name__ == "__main__":

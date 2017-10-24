@@ -380,6 +380,29 @@ def interpolate(cube, sample_points, method=None):
     return new_cube
 
 
+def nearest_neighbour_indices(cube, sample_points):
+    """
+    Extract an array of interpolated point indices.
+
+    Args:
+
+    * cube
+        The source Cube.
+
+    * sample_points
+        A sequence of coordinate (name) - values pairs.
+
+    Returns:
+        An array containing the nearest-neighbour indices of sample points.
+
+    """
+    cache = {}
+    column_indexes = _nearest_neighbour_indices_ndcoords(cube,
+                                                         sample_points,
+                                                         cache=cache)
+    return column_indexes
+
+
 def _ll_to_cart(lon, lat):
     # Based on cartopy.img_transform.ll_to_cart().
     x = np.sin(np.deg2rad(90 - lat)) * np.cos(np.deg2rad(lon))
