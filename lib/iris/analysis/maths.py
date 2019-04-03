@@ -280,7 +280,7 @@ def add(cube, other, dim=None, in_place=False, strict=True):
 
     return new_cube
 
-def subtract(cube, other, dim=None, in_place=False, strict=False):
+def subtract(cube, other, dim=None, in_place=False, strict=True):
     """
     Calculate the difference between two cubes, or the difference between
     a cube and a coordinate or scalar value.
