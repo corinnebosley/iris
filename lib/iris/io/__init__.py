@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2016, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -23,14 +23,13 @@ from __future__ import (absolute_import, division, print_function)
 from six.moves import (filter, input, map, range, zip)  # noqa
 import six
 
+from collections import OrderedDict
 import glob
 import os.path
-import types
 import re
 import collections
 
 import iris.fileformats
-import iris.fileformats.dot
 import iris.cube
 import iris.exceptions
 
@@ -149,25 +148,34 @@ def expand_filespecs(file_specs):
         File paths which may contain '~' elements or wildcards.
 
     Returns:
-        A list of matching file paths.  If any of the file-specs matches no
-        existing files, an exception is raised.
+        A well-ordered list of matching absolute file paths.
+        If any of the file-specs match no existing files, an
+        exception is raised.
 
     """
     # Remove any hostname component - currently unused
-    filenames = [os.path.expanduser(fn[2:] if fn.startswith('//') else fn)
+    filenames = [os.path.abspath(os.path.expanduser(
+                    fn[2:] if fn.startswith('//') else fn))
                  for fn in file_specs]
 
     # Try to expand all filenames as globs
-    glob_expanded = {fn : sorted(glob.glob(fn)) for fn in filenames}
+    glob_expanded = OrderedDict([[fn, sorted(glob.glob(fn))]
+                                 for fn in filenames])
 
     # If any of the specs expanded to an empty list then raise an error
-    value_lists = glob_expanded.values()
-    if not all(value_lists):
-        raise IOError("One or more of the files specified did not exist %s." %
-        ["%s expanded to %s" % (pattern, expanded if expanded else "empty")
-         for pattern, expanded in six.iteritems(glob_expanded)])
+    all_expanded = glob_expanded.values()
 
-    return sum(value_lists, [])
+    if not all(all_expanded):
+        msg = "One or more of the files specified did not exist:"
+        for pattern, expanded in six.iteritems(glob_expanded):
+            if expanded:
+                msg += '\n    - "{}" matched {} file(s)'.format(pattern,
+                                                                len(expanded))
+            else:
+                msg += '\n    * "{}" didn\'t match any files'.format(pattern)
+        raise IOError(msg)
+
+    return [fname for fnames in all_expanded for fname in fnames]
 
 
 def load_files(filenames, callback, constraints=None):
@@ -244,15 +252,15 @@ def _dot_save_png(cube, target, **kwargs):
 
 
 def _grib_save(cube, target, append=False, **kwargs):
-    # A simple wrapper for `iris.fileformats.grib.save_grib2` which
-    # allows the saver to be registered without having `gribapi`
-    # installed.
+    # A simple wrapper for the grib save routine, which allows the saver to be
+    # registered without having the grib implementation installed.
     try:
-        import gribapi
+        from iris_grib import save_grib2
     except ImportError:
-        raise RuntimeError('Unable to save GRIB file - the ECMWF '
-                           '`gribapi` package is not installed.')
-    return iris.fileformats.grib.save_grib2(cube, target, append, **kwargs)
+        raise RuntimeError('Unable to save GRIB file - '
+                           '"iris_grib" package is not installed.')
+
+    save_grib2(cube, target, append, **kwargs)
 
 
 def _check_init_savers():
@@ -320,9 +328,9 @@ def save(source, target, saver=None, **kwargs):
 
         * netCDF - the Unidata network Common Data Format:
             * see :func:`iris.fileformats.netcdf.save`
-        * GRIB2  - the WMO GRIdded Binary data format;
-            * see :func:`iris.fileformats.grib.save_grib2`
-        * PP     - the Met Office UM Post Processing Format.
+        * GRIB2 - the WMO GRIdded Binary data format:
+            * see :func:`iris_grib.save_grib2`.
+        * PP - the Met Office UM Post Processing Format:
             * see :func:`iris.fileformats.pp.save`
 
     A custom saver can be provided to the function to write to a different
@@ -338,11 +346,12 @@ def save(source, target, saver=None, **kwargs):
 
     Kwargs:
 
-        * saver     - Optional. Specifies the save function to use.
+        * saver     - Optional. Specifies the file format to save.
                       If omitted, Iris will attempt to determine the format.
 
-                      This keyword can be used to implement a custom save
-                      format. Function form must be:
+                      If a string, this is the recognised filename extension
+                      (where the actual filename may not have it).
+                      Otherwise the value is a saver function, of the form:
                       ``my_saver(cube, target)`` plus any custom keywords. It
                       is assumed that a saver will accept an ``append`` keyword
                       if it's file format can handle multiple cubes. See also
@@ -363,7 +372,7 @@ def save(source, target, saver=None, **kwargs):
         # Save a cube to netCDF, defaults to NETCDF4 file format
         iris.save(my_cube, "myfile.nc")
 
-        # Save a cube list to netCDF, using the NETCDF4_CLASSIC storage option
+        # Save a cube list to netCDF, using the NETCDF3_CLASSIC storage option
         iris.save(my_cube_list, "myfile.nc", netcdf_format="NETCDF3_CLASSIC")
 
     .. warning::

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -47,8 +47,11 @@ _DEFAULT_GLOBE = ccrs.Globe(semimajor_axis=6371229.0,
 
 
 @tests.skip_plot
+@tests.skip_data
 class TestBasic(tests.GraphicsTest):
-    cube = iris.tests.stock.realistic_4d()
+    def setUp(self):
+        super(TestBasic, self).setUp()
+        self.cube = iris.tests.stock.realistic_4d()
 
     def test_contourf(self):
         cube = self.cube[0, 0]
@@ -81,6 +84,7 @@ class TestBasic(tests.GraphicsTest):
 @tests.skip_plot
 class TestUnmappable(tests.GraphicsTest):
     def setUp(self):
+        super(TestUnmappable, self).setUp()
         src_cube = iris.tests.stock.global_pp()
 
         # Make a cube that can't be located on the globe.
@@ -95,11 +99,10 @@ class TestUnmappable(tests.GraphicsTest):
             0)
         cube.standard_name = 'air_temperature'
         cube.units = 'K'
-        cube.assert_valid()
         self.cube = cube
 
     def test_simple(self):
-        iplt.contourf(self.cube)
+        iplt.contourf(self.cube, coords=['y', 'x'])
         self.check_graphic()
 
 
@@ -107,6 +110,7 @@ class TestUnmappable(tests.GraphicsTest):
 @tests.skip_plot
 class TestMappingSubRegion(tests.GraphicsTest):
     def setUp(self):
+        super(TestMappingSubRegion, self).setUp()
         cube_path = tests.get_data_path(
             ('PP', 'aPProt1', 'rotatedMHtimecube.pp'))
         cube = iris.load_cube(cube_path)[0]
@@ -155,6 +159,7 @@ class TestMappingSubRegion(tests.GraphicsTest):
 @tests.skip_plot
 class TestLowLevel(tests.GraphicsTest):
     def setUp(self):
+        super(TestLowLevel, self).setUp()
         self.cube = iris.tests.stock.global_pp()
         self.few = 4
         self.few_levels = list(range(280, 300, 5))
@@ -187,6 +192,7 @@ class TestLowLevel(tests.GraphicsTest):
 @tests.skip_plot
 class TestBoundedCube(tests.GraphicsTest):
     def setUp(self):
+        super(TestBoundedCube, self).setUp()
         self.cube = iris.tests.stock.global_pp()
         # Add some bounds to this data (this will actually make the bounds
         # invalid as they will straddle the north pole and overlap on the
@@ -214,13 +220,14 @@ class TestBoundedCube(tests.GraphicsTest):
         np_testing.assert_array_almost_equal(
             iplt.default_projection_extent(
                 self.cube, mode=iris.coords.BOUND_MODE),
-            [-1.875046, 358.124954, -91.24995422, 91.24998474])
+            [-1.875046, 358.124954, -90, 90])
 
 
 @tests.skip_data
 @tests.skip_plot
 class TestLimitedAreaCube(tests.GraphicsTest):
     def setUp(self):
+        super(TestLimitedAreaCube, self).setUp()
         cube_path = tests.get_data_path(('PP', 'aPProt1', 'rotated.pp'))
         self.cube = iris.load_cube(cube_path)[::20, ::20]
         self.cube.coord('grid_latitude').guess_bounds()

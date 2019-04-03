@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2019, Met Office
 #
 # This file is part of Iris.
 #
@@ -36,7 +36,25 @@ import iris.analysis
 import iris.coords
 import iris.coord_systems
 import iris.exceptions
+from iris.util import _meshgrid
+from ._grid_angles import gridcell_angles, rotate_grid_vectors
 
+# List of contents to control Sphinx autodocs.
+# Unfortunately essential to get docs for the grid_angles functions.
+__all__ = [
+    'area_weights',
+    'cosine_latitude_weights',
+    'get_xy_contiguous_bounded_grids',
+    'get_xy_grids',
+    'gridcell_angles',
+    'project',
+    'rotate_grid_vectors',
+    'rotate_pole',
+    'rotate_winds',
+    'unrotate_pole',
+    'wrap_lons',
+    'DistanceDifferential',
+    'PartialDifferential']
 
 # This value is used as a fall-back if the cube does not define the earth
 DEFAULT_SPHERICAL_EARTH_RADIUS = 6367470
@@ -70,13 +88,37 @@ def wrap_lons(lons, base, period):
 
 def unrotate_pole(rotated_lons, rotated_lats, pole_lon, pole_lat):
     """
-    Convert rotated-pole lons and lats to unrotated ones.
+    Convert arrays of rotated-pole longitudes and latitudes to unrotated
+    arrays of longitudes and latitudes. The values of ``pole_lon`` and
+    ``pole_lat`` should describe the location of the rotated pole that
+    describes the arrays of rotated-pole longitudes and latitudes.
+
+    As the arrays of rotated-pole longitudes and latitudes must describe a
+    rectilinear grid, the arrays of rotated-pole longitudes and latitudes must
+    be of the same shape as each other.
 
     Example::
 
-        lons, lats = unrotate_pole(grid_lons, grid_lats, pole_lon, pole_lat)
+        lons, lats = unrotate_pole(rotated_lons, rotated_lats, \
+          pole_lon, pole_lat)
 
     .. note:: Uses proj.4 to perform the conversion.
+
+    Args:
+
+        * rotated_lons:
+            An array of rotated-pole longitude values.
+        * rotated_lats:
+            An array of rotated-pole latitude values.
+        * pole_lon:
+            The longitude of the rotated pole that describes the arrays of
+            rotated-pole longitudes and latitudes.
+        * pole_lat:
+            The latitude of the rotated pole that describes the arrays of
+            rotated-pole longitudes and latitudes.
+
+    Returns:
+        An array of unrotated longitudes and an array of unrotated latitudes.
 
     """
     src_proj = ccrs.RotatedGeodetic(pole_longitude=pole_lon,
@@ -92,13 +134,38 @@ def unrotate_pole(rotated_lons, rotated_lats, pole_lon, pole_lat):
 
 def rotate_pole(lons, lats, pole_lon, pole_lat):
     """
-    Convert arrays of lons and lats to ones on a rotated pole.
+    Convert arrays of longitudes and latitudes to arrays of rotated-pole
+    longitudes and latitudes. The values of ``pole_lon`` and ``pole_lat``
+    should describe the rotated pole that the arrays of longitudes and
+    latitudes are to be rotated onto.
+
+    As the arrays of longitudes and latitudes must describe a rectilinear grid,
+    the arrays of rotated-pole longitudes and latitudes must be of the same
+    shape as each other.
 
     Example::
 
-        grid_lons, grid_lats = rotate_pole(lons, lats, pole_lon, pole_lat)
+        rotated_lons, rotated_lats = rotate_pole(lons, lats,\
+         pole_lon, pole_lat)
 
     .. note:: Uses proj.4 to perform the conversion.
+
+    Args:
+
+        * lons:
+            An array of longitude values.
+        * lats:
+            An array of latitude values.
+        * pole_lon:
+            The longitude of the rotated pole that the arrays of longitudes and
+            latitudes are to be rotated onto.
+        * pole_lat:
+            The latitude of the rotated pole that the arrays of longitudes and
+            latitudes are to be rotated onto.
+
+    Returns:
+        An array of rotated-pole longitudes and an array of rotated-pole
+        latitudes.
 
     """
     src_proj = ccrs.Geodetic()
@@ -112,18 +179,18 @@ def rotate_pole(lons, lats, pole_lon, pole_lat):
     return rotated_lon, rotated_lat
 
 
-def _get_lat_lon_coords(cube):
+def _get_lon_lat_coords(cube):
     lat_coords = [coord for coord in cube.coords()
                   if "latitude" in coord.name()]
     lon_coords = [coord for coord in cube.coords()
                   if "longitude" in coord.name()]
     if len(lat_coords) > 1 or len(lon_coords) > 1:
         raise ValueError(
-            "Calling _get_lat_lon_coords() with multiple lat or lon coords"
+            "Calling `_get_lon_lat_coords` with multiple lat or lon coords"
             " is currently disallowed")
     lat_coord = lat_coords[0]
     lon_coord = lon_coords[0]
-    return (lat_coord, lon_coord)
+    return (lon_coord, lat_coord)
 
 
 def _xy_range(cube, mode=None):
@@ -210,7 +277,7 @@ def get_xy_grids(cube):
 
     if x.ndim == y.ndim == 1:
         # Convert to 2D.
-        x, y = np.meshgrid(x, y)
+        x, y = _meshgrid(x, y)
     elif x.ndim == y.ndim == 2:
         # They are already in the correct shape.
         pass
@@ -235,45 +302,45 @@ def get_xy_contiguous_bounded_grids(cube):
 
     x = x_coord.contiguous_bounds()
     y = y_coord.contiguous_bounds()
-    x, y = np.meshgrid(x, y)
+    x, y = _meshgrid(x, y)
 
     return (x, y)
 
 
-def _quadrant_area(radian_colat_bounds, radian_lon_bounds, radius_of_earth):
+def _quadrant_area(radian_lat_bounds, radian_lon_bounds, radius_of_earth):
     """Calculate spherical segment areas.
 
-    - radian_colat_bounds    -- [n,2] array of colatitude bounds (radians)
-    - radian_lon_bounds      -- [n,2] array of longitude bounds (radians)
-    - radius_of_earth        -- radius of the earth
-                                (currently assumed spherical)
+    - radian_lat_bounds    -- [n,2] array of latitude bounds (radians)
+    - radian_lon_bounds    -- [n,2] array of longitude bounds (radians)
+    - radius_of_earth      -- radius of the earth
+                              (currently assumed spherical)
 
     Area weights are calculated for each lat/lon cell as:
 
         .. math::
 
-            r^2 (lon_1 - lon_0) ( cos(colat_0) - cos(colat_1))
+            r^2 (lon_1 - lon_0) ( sin(lat_1) - sin(lat_0))
 
     The resulting array will have a shape of
-    *(radian_colat_bounds.shape[0], radian_lon_bounds.shape[0])*
+    *(radian_lat_bounds.shape[0], radian_lon_bounds.shape[0])*
 
     The calculations are done at 64 bit precision and the returned array
     will be of type numpy.float64.
 
     """
     # ensure pairs of bounds
-    if (radian_colat_bounds.shape[-1] != 2 or
+    if (radian_lat_bounds.shape[-1] != 2 or
             radian_lon_bounds.shape[-1] != 2 or
-            radian_colat_bounds.ndim != 2 or
+            radian_lat_bounds.ndim != 2 or
             radian_lon_bounds.ndim != 2):
         raise ValueError("Bounds must be [n,2] array")
 
     # fill in a new array of areas
     radius_sqr = radius_of_earth ** 2
-    radian_colat_64 = radian_colat_bounds.astype(np.float64)
+    radian_lat_64 = radian_lat_bounds.astype(np.float64)
     radian_lon_64 = radian_lon_bounds.astype(np.float64)
 
-    ylen = np.cos(radian_colat_64[:, 0]) - np.cos(radian_colat_64[:, 1])
+    ylen = np.sin(radian_lat_64[:, 1]) - np.sin(radian_lat_64[:, 0])
     xlen = radian_lon_64[:, 1] - radian_lon_64[:, 0]
     areas = radius_sqr * np.outer(ylen, xlen)
 
@@ -282,7 +349,7 @@ def _quadrant_area(radian_colat_bounds, radian_lon_bounds, radius_of_earth):
 
 
 def area_weights(cube, normalize=False):
-    """
+    r"""
     Returns an array of area weights, with the same dimensions as the cube.
 
     This is a 2D lat/lon area weights array, repeated over the non lat/lon
@@ -305,7 +372,7 @@ def area_weights(cube, normalize=False):
 
         .. math::
 
-            r^2 cos(lat_0) (lon_1 - lon_0) - r^2 cos(lat_1) (lon_1 - lon_0)
+            r^2 (lon_1 - lon_0) (\sin(lat_1) - \sin(lat_0))
 
     Currently, only supports a spherical datum.
     Uses earth radius from the cube, if present and spherical.
@@ -329,7 +396,7 @@ def area_weights(cube, normalize=False):
 
     # Get the lon and lat coords and axes
     try:
-        lat, lon = _get_lat_lon_coords(cube)
+        lon, lat = _get_lon_lat_coords(cube)
     except IndexError:
         raise ValueError('Cannot get latitude/longitude '
                          'coordinates from cube {!r}.'.format(cube.name()))
@@ -366,8 +433,7 @@ def area_weights(cube, normalize=False):
 
     # Create 2D weights from bounds.
     # Use the geographical area as the weight for each cell
-    # Convert latitudes to co-latitude. I.e from -90 --> +90  to  0 --> pi
-    ll_weights = _quadrant_area(lat.bounds + np.pi / 2.,
+    ll_weights = _quadrant_area(lat.bounds,
                                 lon.bounds, radius_of_earth)
 
     # Normalize the weights if necessary.
@@ -391,7 +457,7 @@ def area_weights(cube, normalize=False):
 
 
 def cosine_latitude_weights(cube):
-    """
+    r"""
     Returns an array of latitude weights, with the same dimensions as
     the cube. The weights are the cosine of latitude.
 
@@ -526,7 +592,7 @@ def project(cube, target_proj, nx=None, ny=None):
 
     """
     try:
-        lat_coord, lon_coord = _get_lat_lon_coords(cube)
+        lon_coord, lat_coord = _get_lon_lat_coords(cube)
     except IndexError:
         raise ValueError('Cannot get latitude/longitude '
                          'coordinates from cube {!r}.'.format(cube.name()))
@@ -560,7 +626,7 @@ def project(cube, target_proj, nx=None, ny=None):
     source_x = lon_coord.points
     source_y = lat_coord.points
     if source_x.ndim != 2 or source_y.ndim != 2:
-        source_x, source_y = np.meshgrid(source_x, source_y)
+        source_x, source_y = _meshgrid(source_x, source_y)
 
     # Calculate target grid
     target_cs = None
@@ -668,12 +734,12 @@ def project(cube, target_proj, nx=None, ny=None):
     new_cube = iris.cube.Cube(new_data)
 
     # Add new grid coords
-    x_coord = iris.coords.DimCoord(
-        target_x[0, :], 'projection_x_coordinate',
-        coord_system=copy.copy(target_cs))
-    y_coord = iris.coords.DimCoord(
-        target_y[:, 0], 'projection_y_coordinate',
-        coord_system=copy.copy(target_cs))
+    x_coord = iris.coords.DimCoord(target_x[0, :], 'projection_x_coordinate',
+                                   units='m',
+                                   coord_system=copy.copy(target_cs))
+    y_coord = iris.coords.DimCoord(target_y[:, 0], 'projection_y_coordinate',
+                                   units='m',
+                                   coord_system=copy.copy(target_cs))
 
     new_cube.add_dim_coord(x_coord, xdim)
     new_cube.add_dim_coord(y_coord, ydim)
@@ -901,7 +967,7 @@ def _transform_distance_vectors_tolerance_mask(src_crs, x, y, tgt_crs,
 
 
 def rotate_winds(u_cube, v_cube, target_cs):
-    """
+    r"""
     Transform wind vectors to a different coordinate system.
 
     The input cubes contain U and V components parallel to the local X and Y
@@ -1013,7 +1079,7 @@ def rotate_winds(u_cube, v_cube, target_cs):
 
     # Convert points to 2D, if not already, and determine dims.
     if x.ndim == y.ndim == 1:
-        x, y = np.meshgrid(x, y)
+        x, y = _meshgrid(x, y)
         dims = (y_dims[0], x_dims[0])
     else:
         dims = x_dims

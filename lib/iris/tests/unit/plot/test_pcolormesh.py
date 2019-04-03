@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2014 - 2015, Met Office
+# (C) British Crown Copyright 2014 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -22,21 +22,42 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 # Import iris.tests first so that some things can be initialised before
 # importing anything else.
 import iris.tests as tests
+
+import numpy as np
+
+from iris.tests.stock import simple_2d
 from iris.tests.unit.plot import TestGraphicStringCoord
+from iris.tests.unit.plot._blockplot_common import \
+    MixinStringCoordPlot, Mixin2dCoordsPlot, Mixin2dCoordsContigTol
+
 
 if tests.MPL_AVAILABLE:
     import iris.plot as iplt
+    PLOT_FUNCTION_TO_TEST = iplt.pcolormesh
 
 
 @tests.skip_plot
-class TestStringCoordPlot(TestGraphicStringCoord):
-    def test_yaxis_labels(self):
-        iplt.pcolormesh(self.cube, coords=('bar', 'str_coord'))
-        self.assertBoundsTickLabels('yaxis')
+class TestStringCoordPlot(MixinStringCoordPlot, TestGraphicStringCoord):
+    def blockplot_func(self):
+        return PLOT_FUNCTION_TO_TEST
 
-    def test_xaxis_labels(self):
-        iplt.pcolormesh(self.cube, coords=('str_coord', 'bar'))
-        self.assertBoundsTickLabels('xaxis')
+
+@tests.skip_plot
+class Test2dCoords(tests.IrisTest, Mixin2dCoordsPlot):
+    def setUp(self):
+        self.blockplot_setup()
+
+    def blockplot_func(self):
+        return PLOT_FUNCTION_TO_TEST
+
+
+@tests.skip_plot
+class Test2dContigTol(tests.IrisTest, Mixin2dCoordsContigTol):
+    # Extra call kwargs expected -- unlike 'pcolor', there are none.
+    additional_kwargs = {}
+
+    def blockplot_func(self):
+        return PLOT_FUNCTION_TO_TEST
 
 
 if __name__ == "__main__":

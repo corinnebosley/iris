@@ -13,8 +13,11 @@ import os
 import glob
 import re
 import warnings
-import matplotlib.image as image
 
+import matplotlib.image as image
+from sphinx.util import status_iterator
+
+from sphinx.util import status_iterator
 
 template = '''\
 {{% extends "layout.html" %}}
@@ -64,8 +67,7 @@ def gen_gallery(app, doctree):
         'mathtext_examples',
         'matshow_02',
         'matshow_03',
-        'matplotlib_icon',
-        ])
+        'matplotlib_icon'])
 
     thumbnails = {}
     rows = []
@@ -193,9 +195,8 @@ images = new Array();
         with open(gallery_path, 'w') as fh:
             fh.write(content)
 
-    for key in app.builder.status_iterator(thumbnails,
-                                           'generating thumbnails... ',
-                                           length=len(thumbnails)):
+    for key in status_iterator(thumbnails, 'generating thumbnails... ',
+                               length=len(thumbnails)):
         image.thumbnail(key, thumbnails[key], 0.3)
 
 

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2014 - 2016, Met Office
+# (C) British Crown Copyright 2014 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -23,43 +23,46 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 # importing anything else.
 import iris.tests as tests
 
-from subprocess import check_output
-
+from cf_units import Unit
 import numpy.ma as ma
 
 import iris
-from iris import FUTURE, load_cube, save
-from iris.coords import CellMethod
+from iris import load_cube, save
+from iris.coords import CellMethod, DimCoord
 from iris.coord_systems import RotatedGeogCS
 from iris.fileformats.pp import EARTH_RADIUS as UM_DEFAULT_EARTH_RADIUS
+import iris.tests.stock as stock
 from iris.util import is_regular
+
+# Grib support is optional.
+if tests.GRIB_AVAILABLE:
+    from iris_grib import load_pairs_from_fields
+    from iris_grib.message import GribMessage
 
 
 @tests.skip_data
 @tests.skip_grib
 class TestImport(tests.IrisTest):
     def test_gdt1(self):
-        with FUTURE.context(strict_grib_load=True):
-            path = tests.get_data_path(('GRIB', 'rotated_nae_t',
-                                        'sensible_pole.grib2'))
-            cube = load_cube(path)
-            self.assertCMLApproxData(cube)
+        path = tests.get_data_path(('GRIB', 'rotated_nae_t',
+                                    'sensible_pole.grib2'))
+        cube = load_cube(path)
+        self.assertCMLApproxData(cube)
 
     def test_gdt90_with_bitmap(self):
-        with FUTURE.context(strict_grib_load=True):
-            path = tests.get_data_path(('GRIB', 'umukv', 'ukv_chan9.grib2'))
-            cube = load_cube(path)
-            # Pay particular attention to the orientation.
-            self.assertIsNot(cube.data[0, 0], ma.masked)
-            self.assertIs(cube.data[-1, 0], ma.masked)
-            self.assertIs(cube.data[0, -1], ma.masked)
-            self.assertIs(cube.data[-1, -1], ma.masked)
-            x = cube.coord('projection_x_coordinate').points
-            y = cube.coord('projection_y_coordinate').points
-            self.assertGreater(x[0], x[-1])  # Decreasing X coordinate
-            self.assertLess(y[0], y[-1])  # Increasing Y coordinate
-            # Check everything else.
-            self.assertCMLApproxData(cube)
+        path = tests.get_data_path(('GRIB', 'umukv', 'ukv_chan9.grib2'))
+        cube = load_cube(path)
+        # Pay particular attention to the orientation.
+        self.assertIsNot(cube.data[0, 0], ma.masked)
+        self.assertIs(cube.data[-1, 0], ma.masked)
+        self.assertIs(cube.data[0, -1], ma.masked)
+        self.assertIs(cube.data[-1, -1], ma.masked)
+        x = cube.coord('projection_x_coordinate').points
+        y = cube.coord('projection_y_coordinate').points
+        self.assertGreater(x[0], x[-1])  # Decreasing X coordinate
+        self.assertLess(y[0], y[-1])  # Increasing Y coordinate
+        # Check everything else.
+        self.assertCMLApproxData(cube)
 
 
 @tests.skip_data
@@ -69,8 +72,7 @@ class TestPDT8(tests.IrisTest):
         # Load from the test file.
         file_path = tests.get_data_path(('GRIB', 'time_processed',
                                          'time_bound.grib2'))
-        with FUTURE.context(strict_grib_load=True):
-            self.cube = load_cube(file_path)
+        self.cube = load_cube(file_path)
 
     def test_coords(self):
         # Check the result has main coordinates as expected.
@@ -133,6 +135,25 @@ class TestPDT11(tests.TestGribMessage):
             self.assertGribMessageContents(temp_file_path, expect_values)
 
 
+@tests.skip_grib
+class TestPDT40(tests.IrisTest):
+    def test_save_load(self):
+        cube = stock.lat_lon_cube()
+        cube.rename('atmosphere_mole_content_of_ozone')
+        cube.units = Unit('Dobson')
+        tcoord = DimCoord(23, 'time',
+                          units=Unit('days since epoch', calendar='standard'))
+        fpcoord = DimCoord(24, 'forecast_period', units=Unit('hours'))
+        cube.add_aux_coord(tcoord)
+        cube.add_aux_coord(fpcoord)
+        cube.attributes['WMO_constituent_type'] = 0
+
+        with self.temp_filename('test_grib_pdt40.grib2') as temp_file_path:
+            save(cube, temp_file_path)
+            loaded = load_cube(temp_file_path)
+            self.assertEqual(loaded.attributes, cube.attributes)
+
+
 @tests.skip_data
 @tests.skip_grib
 class TestGDT5(tests.TestGribMessage):
@@ -179,10 +200,9 @@ class TestGDT5(tests.TestGribMessage):
             self.assertGribMessageContents(temp_file_path, expect_values)
 
             # Load the Grib file back into a new cube.
-            with FUTURE.context(strict_grib_load=True):
-                cube_loaded_from_saved = load_cube(temp_file_path)
-                # Also load data, before the temporary file gets deleted.
-                cube_loaded_from_saved.data
+            cube_loaded_from_saved = load_cube(temp_file_path)
+            # Also load data, before the temporary file gets deleted.
+            cube_loaded_from_saved.data
 
         # The re-loaded result will not match the original in every respect:
         #  * cube attributes are discarded
@@ -247,8 +267,7 @@ class TestGDT30(tests.IrisTest):
 
     def test_lambert(self):
         path = tests.get_data_path(('GRIB', 'lambert', 'lambert.grib2'))
-        with FUTURE.context(strict_grib_load=True):
-            cube = load_cube(path)
+        cube = load_cube(path)
         self.assertCMLApproxData(cube)
 
 
@@ -258,14 +277,12 @@ class TestGDT40(tests.IrisTest):
 
     def test_regular(self):
         path = tests.get_data_path(('GRIB', 'gaussian', 'regular_gg.grib2'))
-        with FUTURE.context(strict_grib_load=True):
-            cube = load_cube(path)
+        cube = load_cube(path)
         self.assertCMLApproxData(cube)
 
     def test_reduced(self):
         path = tests.get_data_path(('GRIB', 'reduced', 'reduced_gg.grib2'))
-        with FUTURE.context(strict_grib_load=True):
-            cube = load_cube(path)
+        cube = load_cube(path)
         self.assertCMLApproxData(cube)
 
 
@@ -276,9 +293,46 @@ class TestDRT3(tests.IrisTest):
     def test_grid_complex_spatial_differencing(self):
         path = tests.get_data_path(('GRIB', 'missing_values',
                                     'missing_values.grib2'))
-        with FUTURE.context(strict_grib_load=True):
-            cube = load_cube(path)
+        cube = load_cube(path)
         self.assertCMLApproxData(cube)
+
+
+@tests.skip_data
+@tests.skip_grib
+class TestAsCubes(tests.IrisTest):
+    def setUp(self):
+        # Load from the test file.
+        self.file_path = tests.get_data_path(('GRIB', 'time_processed',
+                                              'time_bound.grib2'))
+
+    def test_year_filter(self):
+        msgs = GribMessage.messages_from_filename(self.file_path)
+        chosen_messages = []
+        for gmsg in msgs:
+            if gmsg.sections[1]['year'] == 1998:
+                chosen_messages.append(gmsg)
+        cubes_msgs = list(load_pairs_from_fields(chosen_messages))
+        self.assertEqual(len(cubes_msgs), 1)
+
+    def test_year_filter_none(self):
+        msgs = GribMessage.messages_from_filename(self.file_path)
+        chosen_messages = []
+        for gmsg in msgs:
+            if gmsg.sections[1]['year'] == 1958:
+                chosen_messages.append(gmsg)
+        cubes_msgs = list(load_pairs_from_fields(chosen_messages))
+        self.assertEqual(len(cubes_msgs), 0)
+
+    def test_as_pairs(self):
+        messages = GribMessage.messages_from_filename(self.file_path)
+        cubes = []
+        cube_msg_pairs = load_pairs_from_fields(messages)
+        for cube, gmsg in cube_msg_pairs:
+            if gmsg.sections[1]['year'] == 1998:
+                cube.attributes['the year is'] = gmsg.sections[1]['year']
+                cubes.append(cube)
+        self.assertEqual(len(cubes), 1)
+        self.assertEqual(cubes[0].attributes['the year is'], 1998)
 
 
 if __name__ == '__main__':

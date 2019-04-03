@@ -1,9 +1,10 @@
 {% extends "layout.html" %}
 {% set title = 'Iris documentation homepage' %}
 {% block extrahead %}
+{{ super() }}
 
-<script type="text/javascript" src="_static/jquery.cycle.all.latest.js"></script>
-<script type="text/javascript" src="_static/random_image.js"></script>
+<script type="text/javascript" src="{{ pathto("_static/jquery.cycle.all.latest.js", 1) }}"></script>
+<script type="text/javascript" src="{{ pathto("_static/random_image.js", 1) }}" async></script>
 
 <style type="text/css">
 #slideshow { width: 400px; }
@@ -29,7 +30,7 @@ $(document).ready(function() {
     // Only use first 5 images
     for (var i = 0; i < 5; i++) {
         var img = images[i];
-		$ss.append('<a href="'+img[2]+'"><img src="'+img[1]+'" class="slideshowImage"/></a>');
+		$ss.append('<a href="'+img[2]+'" style="background-color: white;" ><img src="'+img[1]+'" class="slideshowImage"/></a>');
     }
 
     $ss.cycle({
@@ -63,18 +64,48 @@ $(document).bind('keypress', function(e) {
 {% block body %}
 
 
-<p style="font-style: italic; font-size: larger;">
-Iris seeks to provide a powerful, easy to use, and community-driven Python library for analysing and visualising meteorological and oceanographic data sets.
+
+
+<p>
+  Iris implements a data model based on the <a href="http://cfconventions.org/">CF conventions</a>
+  giving you a powerful, format-agnostic interface for working with your data.
+  It excels when working with multi-dimensional Earth Science data, where tabular
+  representations become unwieldy and inefficient.
 </p>
 <p>
-With Iris you can:
+  <a href="http://cfconventions.org/standard-names.html">CF Standard names</a>,
+  <a href="https://github.com/SciTools/cf_units">units</a>, and coordinate metadata
+  are built into Iris, giving you a rich and expressive interface for maintaining
+  an accurate representation of your data. Its treatment of data and
+  associated metadata as first-class objects includes:
+</p>
 <ul>
-    <li>Use a single API to work on your data, irrespective of its original format.
-    <li>Read and write (CF-)netCDF, GRIB, and PP files.</li>
-    <li>Easily produce graphs and maps via integration with matplotlib and cartopy.</li>
+  <li>a visualisation interface based on <a href="https://matplotlib.org/">matplotlib</a> and
+    <a href="https://scitools.org.uk/cartopy/docs/latest/">cartopy</a>,</li>
+  <li>unit conversion,</li>
+  <li>subsetting and extraction,</li>
+  <li>merge and concatenate,</li>
+  <li>aggregations and reductions (including min, max, mean and weighted averages),</li>
+  <li>interpolation and regridding (including nearest-neighbor, linear and area-weighted), and</li>
+  <li>operator overloads (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, etc.).</li>
 </ul>
+<p>
+  A number of file formats are recognised by Iris, including CF-compliant NetCDF, GRIB,
+  and PP, and it has a plugin architecture to allow other formats to be added seamlessly.
+</p>
+<p>
+  Building upon <a href="http://www.numpy.org/">NumPy</a> and
+  <a href="https://dask.pydata.org/en/latest/">dask</a>,
+  Iris scales from efficient single-machine workflows right through to multi-core
+  clusters and HPC.
+  Interoperability with packages from the wider scientific Python ecosystem comes from Iris'
+  use of standard NumPy/dask arrays as its underlying data storage.
 </p>
 
+<div style="float:right; padding-top: 50px; padding-right: 10px;">
+	<div class="slideshow"></div>
+	<div id="sliderNav" align="center"></div>
+</div>
 
 <div style="float: left;">
 	<ul style="list-style: none; margin-left: -15px; margin-right: 0px; margin-top: 50px;">
@@ -103,16 +134,12 @@ With Iris you can:
         <span class="linkdescr">extra information on specific technical issues</span></p>
     </li>
     <li>
-        <p class="biglink"><a class="biglink" href="whatsnew/1.9.html">What's new in Iris 1.9?</a><br/>
+        <p class="biglink"><a class="biglink" href="whatsnew/2.2.html">What's new in Iris 2.2?</a><br/>
         <span class="linkdescr">recent changes in Iris's capabilities</span></p>
     </li>
 	</ul>
 </div>
 
-<div style="float:right; padding-top: 50px; padding-right: 10px;">
-	<div class="slideshow"></div>
-	<div id="sliderNav" align="center"></div>
-</div>
 
 <div class="clearer"></div>
 

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -23,7 +23,7 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 import warnings
 
 import cf_units
-import netcdftime
+import cftime
 import numpy as np
 
 import iris
@@ -40,7 +40,7 @@ MERIDIAN_SCALING_BNG = 0.9996012717
 NIMROD_DEFAULT = -32767.0
 
 TIME_UNIT = cf_units.Unit('hours since 1970-01-01 00:00:00',
-                          calendar=cf_units.CALENDAR_STANDARD)
+                          calendar=cf_units.CALENDAR_GREGORIAN)
 
 
 FIELD_CODES = {73: "orography"}
@@ -76,9 +76,9 @@ def units(cube, field):
 
 def time(cube, field):
     """Add a time coord to the cube."""
-    valid_date = netcdftime.datetime(field.vt_year, field.vt_month,
-                                     field.vt_day, field.vt_hour,
-                                     field.vt_minute, field.vt_second)
+    valid_date = cftime.datetime(field.vt_year, field.vt_month,
+                                 field.vt_day, field.vt_hour,
+                                 field.vt_minute, field.vt_second)
     point = TIME_UNIT.date2num(valid_date)
 
     bounds = None
@@ -97,9 +97,9 @@ def time(cube, field):
 def reference_time(cube, field):
     """Add a 'reference time' to the cube, if present in the field."""
     if field.dt_year != field.int_mdi:
-        data_date = netcdftime.datetime(field.dt_year, field.dt_month,
-                                        field.dt_day, field.dt_hour,
-                                        field.dt_minute)
+        data_date = cftime.datetime(field.dt_year, field.dt_month,
+                                    field.dt_day, field.dt_hour,
+                                    field.dt_minute)
 
         ref_time_coord = DimCoord(TIME_UNIT.date2num(data_date),
                                   standard_name='forecast_reference_time',
@@ -156,10 +156,10 @@ def british_national_grid_y(cube, field):
 
     """
     if field.origin_corner == 0:  # top left
-        y_coord = DimCoord(np.arange(field.num_rows)[::-1] *
-                           -field.row_step + field.y_origin,
-                           standard_name="projection_y_coordinate", units="m",
-                           coord_system=iris.coord_systems.OSGB())
+        y_coord = DimCoord(
+            np.arange(field.num_rows)[::-1] * -field.row_step + field.y_origin,
+            standard_name="projection_y_coordinate", units="m",
+            coord_system=iris.coord_systems.OSGB())
         cube.add_dim_coord(y_coord, 0)
     else:
         raise TranslationError("Corner {0} not yet implemented".

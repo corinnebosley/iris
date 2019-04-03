@@ -1,10 +1,10 @@
 dimensions:
-	latitude = UNLIMITED ; // (94 currently)
 	bnds = 2 ;
+	latitude = 94 ;
 	longitude = 128 ;
 variables:
 	float sea_surface_height_above_geoid(latitude, longitude) ;
-		sea_surface_height_above_geoid:_FillValue = -1.e+30f ;
+		sea_surface_height_above_geoid:_FillValue = 9.96921e+36f ;
 		sea_surface_height_above_geoid:standard_name = "sea_surface_height_above_geoid" ;
 		sea_surface_height_above_geoid:units = "m" ;
 		sea_surface_height_above_geoid:grid_mapping = "latitude_longitude" ;

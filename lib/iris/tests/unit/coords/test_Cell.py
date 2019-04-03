@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2013 - 2015, Met Office
+# (C) British Crown Copyright 2013 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -24,8 +24,9 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 import iris.tests as tests
 
 import datetime
+import numpy as np
 
-import netcdftime
+import cftime
 
 from iris.coords import Cell
 from iris.tests import mock
@@ -43,28 +44,28 @@ class Test___common_cmp__(tests.IrisTest):
         with self.assertRaisesRegexp(exception_type, regexp):
             cell >= other
 
-    def test_netcdftime_cell(self):
+    def test_cftime_cell(self):
         # Check that cell comparison when the cell contains
-        # netcdftime.datetime objects raises an exception otherwise
+        # cftime.datetime objects raises an exception otherwise
         # this will fall back to id comparison producing unreliable
         # results.
-        cell = Cell(netcdftime.datetime(2010, 3, 21))
+        cell = Cell(cftime.datetime(2010, 3, 21))
         dt = mock.Mock(timetuple=mock.Mock())
         self.assert_raises_on_comparison(cell, dt, TypeError,
-                                         'determine the order of netcdftime')
+                                         'determine the order of cftime')
         self.assert_raises_on_comparison(cell, 23, TypeError,
-                                         'determine the order of netcdftime')
+                                         'determine the order of cftime')
         self.assert_raises_on_comparison(cell, 'hello', TypeError,
                                          'Unexpected type.*str')
 
-    def test_netcdftime_other(self):
-        # Check that cell comparison to a netcdftime.datetime object
+    def test_cftime_other(self):
+        # Check that cell comparison to a cftime.datetime object
         # raises an exception otherwise this will fall back to id comparison
         # producing unreliable results.
-        dt = netcdftime.datetime(2010, 3, 21)
+        dt = cftime.datetime(2010, 3, 21)
         cell = Cell(mock.Mock(timetuple=mock.Mock()))
         self.assert_raises_on_comparison(cell, dt, TypeError,
-                                         'determine the order of netcdftime')
+                                         'determine the order of cftime')
 
     def test_PartialDateTime_bounded_cell(self):
         # Check that bounded comparisions to a PartialDateTime
@@ -80,7 +81,7 @@ class Test___common_cmp__(tests.IrisTest):
     def test_PartialDateTime_unbounded_cell(self):
         # Check that cell comparison works with PartialDateTimes.
         dt = PartialDateTime(month=6)
-        cell = Cell(netcdftime.datetime(2010, 3, 1))
+        cell = Cell(cftime.datetime(2010, 3, 1))
         self.assertLess(cell, dt)
         self.assertGreater(dt, cell)
         self.assertLessEqual(cell, dt)
@@ -141,6 +142,40 @@ class Test_contains_point(tests.IrisTest):
         with self.assertRaisesRegexp(TypeError, 'bounded region for datetime'):
             cell.contains_point(point)
 
+
+class Test_numpy_comparison(tests.IrisTest):
+    """
+    Unit tests to check that the results of comparisons with numpy types can be
+    used as truth values."""
+    def test_cell_lhs(self):
+        cell = Cell(point=1.5)
+        n = np.float64(1.2)
+
+        try:
+            bool(cell < n)
+            bool(cell <= n)
+            bool(cell > n)
+            bool(cell >= n)
+            bool(cell == n)
+            bool(cell != n)
+        except:
+            self.fail(
+                "Result of comparison could not be used as a truth value")
+
+    def test_cell_rhs(self):
+        cell = Cell(point=1.5)
+        n = np.float64(1.2)
+
+        try:
+            bool(n < cell)
+            bool(n <= cell)
+            bool(n > cell)
+            bool(n >= cell)
+            bool(n == cell)
+            bool(n != cell)
+        except:
+            self.fail(
+                "Result of comparison could not be used as a truth value")
 
 if __name__ == '__main__':
     tests.main()

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -33,8 +33,8 @@ class LimitedAttributeDict(dict):
                        'calendar', 'leap_month', 'leap_year', 'month_lengths',
                        'coordinates', 'grid_mapping', 'climatology',
                        'cell_methods', 'formula_terms', 'compress',
-                       'missing_value', 'add_offset', 'scale_factor',
-                       'valid_max', 'valid_min', 'valid_range', '_FillValue')
+                       'add_offset', 'scale_factor',
+                       '_FillValue')
 
     def __init__(self, *args, **kwargs):
         dict.__init__(self, *args, **kwargs)
@@ -88,12 +88,13 @@ class CFVariableMixin(object):
         """
         Returns a human-readable name.
 
-        First it tries :attr:`standard_name`, then 'long_name', then 'var_name'
-        before falling back to the value of `default` (which itself defaults to
-        'unknown').
+        First it tries :attr:`standard_name`, then 'long_name', then
+        'var_name', then the STASH attribute before falling back to
+        the value of `default` (which itself defaults to 'unknown').
 
         """
-        return self.standard_name or self.long_name or self.var_name or default
+        return self.standard_name or self.long_name or self.var_name or \
+            str(self.attributes.get('STASH', '')) or default
 
     def rename(self, name):
         """
@@ -137,18 +138,18 @@ class CFVariableMixin(object):
 
     @property
     def var_name(self):
-        """The CF variable name for the object."""
+        """The netCDF variable name for the object."""
         return self._var_name
 
     @var_name.setter
     def var_name(self, name):
         if name is not None:
             if not name:
-                raise ValueError('An empty string is not a valid CF variable '
-                                 'name.')
+                raise ValueError('An empty string is not a valid netCDF '
+                                 'variable name.')
             elif set(name).intersection(string.whitespace):
-                raise ValueError('{!r} is not a valid CF variable name because'
-                                 ' it contains whitespace.'.format(name))
+                raise ValueError('{!r} is not a valid netCDF variable name '
+                                 'as it contains whitespace.'.format(name))
         self._var_name = name
 
     @property

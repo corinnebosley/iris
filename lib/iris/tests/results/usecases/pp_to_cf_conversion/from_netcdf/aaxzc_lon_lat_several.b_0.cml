@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <cubes xmlns="urn:x-iris:cubeml-0.2">
-  <cube standard_name="air_temperature" units="K" var_name="air_temperature">
+  <cube dtype="float32" standard_name="air_temperature" units="K" var_name="air_temperature">
     <attributes>
       <attribute name="Conventions" value="CF-1.5"/>
       <attribute name="STASH" value="m01s03i236"/>
@@ -80,6 +80,6 @@
         <coord interval="1 hour" name="time"/>
       </cellMethod>
     </cellMethods>
-    <data checksum="0x8ab46e19" dtype="float32" shape="(14, 73, 96)"/>
+    <data checksum="0x8ab46e19" dtype="float32" mask_checksum="no-masked-elements" shape="(14, 73, 96)"/>
   </cube>
 </cubes>

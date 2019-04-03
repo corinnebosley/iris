@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2014 - 2015, Met Office
+# (C) British Crown Copyright 2014 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -23,12 +23,9 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 # importing anything else.
 import iris.tests as tests
 
-import shutil
-
 import numpy as np
 
 import iris
-import iris.experimental.um as um
 from iris.tests import mock
 
 
@@ -88,20 +85,16 @@ class TestLBC(tests.IrisTest):
         self.assertArrayEqual(cube.data.mask, mask)
 
 
-class TestFFGrid(tests.IrisTest):
-    @tests.skip_data
-    def test_unhandled_grid_type(self):
-        self.filename = tests.get_data_path(('FF', 'n48_multi_field'))
-        with self.temp_filename() as temp_path:
-            shutil.copyfile(self.filename, temp_path)
-            ffv = um.FieldsFileVariant(temp_path,
-                                       mode=um.FieldsFileVariant.UPDATE_MODE)
-            ffv.fields[3].lbuser4 = 60
-            ffv.close()
-            with mock.patch('warnings.warn') as warn_fn:
-                iris.load(temp_path)
-            self.assertIn("Assuming the data is on a P grid.",
-                          warn_fn.call_args[0][0])
+@tests.skip_data
+class TestSkipField(tests.IrisTest):
+    def test_missing_lbrel(self):
+        infile = tests.get_data_path(('FF', 'lbrel_missing'))
+        with mock.patch('warnings.warn') as warn_fn:
+            fields = iris.load(infile)
+        self.assertIn("Input field skipped as PPField creation failed : "
+                      "error = 'Unsupported header release number: -32768'",
+                      warn_fn.call_args[0][0])
+        self.assertEqual(len(fields), 2)
 
 
 if __name__ == '__main__':

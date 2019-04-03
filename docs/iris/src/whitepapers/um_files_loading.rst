@@ -150,14 +150,14 @@ For example:
     >>> # Show grid details and first 5 longitude values.
     >>> print(' '.join(str(_) for _ in (field.lbcode, field.lbnpt, field.bzx,
     ...                                 field.bdx)))
-    1 96 -3.75 3.75
+    1 96 -3.749999 3.749999
     >>> print(field.bzx + field.bdx * np.arange(1, 6))
-    [  0.     3.75   7.5   11.25  15.  ]
+    [ 0.    3.75  7.5  11.25 15.  ]
     >>> 
     >>> # Show Iris equivalent information.
     ... cube = iris.load_cube(fname)
     >>> print(cube.coord('longitude').points[:5])
-    [  0.     3.75   7.5   11.25  15.  ]
+    [ 0.    3.75  7.5  11.25 15.  ]
 
 .. note::
     Note that in Iris (as in CF) there is no special distinction between
@@ -305,6 +305,7 @@ For hybrid height levels (LBVC=65):
 
 See an example printout of a hybrid height cube,
 :ref:`here <hybrid_cube_printout>`:
+
     Notice that this contains all of the above coordinates --
     'model_level_number', 'sigma', 'level_height' and the derived 'altitude'.
 
@@ -383,6 +384,7 @@ the values actually present in the source fields for each of the elements.
 
 See an example printout of a forecast data cube,
 :ref:`here <cube-statistics_forecast_printout>` :
+
     Notice that this example contains all of the above coordinates -- 'time',
     'forecast_period' and 'forecast_reference_time'.  In this case the data are
     forecasts, so 'time' is a dimension, 'forecast_period' varies with time and

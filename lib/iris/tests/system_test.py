@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -37,11 +37,6 @@ import iris.fileformats.pp as pp
 import iris.tests as tests
 
 
-if tests.GRIB_AVAILABLE:
-    import gribapi
-    import iris.fileformats.grib as grib
-
-
 class SystemInitialTest(tests.IrisTest):
 
     def system_test_supported_filetypes(self):
@@ -74,16 +69,14 @@ class SystemInitialTest(tests.IrisTest):
         filetypes = ('.nc', '.pp')
         if tests.GRIB_AVAILABLE:
             filetypes += ('.grib2',)
-        with iris.FUTURE.context(netcdf_no_unlimited=True,
-                                 netcdf_promote=True, strict_grib_load=True):
-            for filetype in filetypes:
-                saved_tmpfile = iris.util.create_temp_filename(suffix=filetype)
-                iris.save(cm, saved_tmpfile)
+        for filetype in filetypes:
+            saved_tmpfile = iris.util.create_temp_filename(suffix=filetype)
+            iris.save(cm, saved_tmpfile)
 
-                new_cube = iris.load_cube(saved_tmpfile)
-                self.assertCML(new_cube,
-                               ('system',
-                                'supported_filetype_%s.cml' % filetype))
+            new_cube = iris.load_cube(saved_tmpfile)
+            self.assertCML(new_cube,
+                           ('system',
+                            'supported_filetype_%s.cml' % filetype))
 
     @tests.skip_grib
     def system_test_grib_patch(self):

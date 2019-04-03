@@ -77,9 +77,9 @@ we can pass the coordinate name and the aggregation definition to the
               altitude                       -                 x                    x
          Scalar coordinates:
               forecast_reference_time: 2009-11-19 04:00:00
-              level_height: 696.667 m, bound=(0.0, 1393.33) m
+              level_height: 696.6666 m, bound=(0.0, 1393.3333) m
               model_level_number: 10, bound=(1, 19)
-              sigma: 0.92293, bound=(0.84586, 1.0)
+              sigma: 0.92292976, bound=(0.8458596, 1.0)
          Attributes:
               STASH: m01s00i004
               source: Data from Met Office Unified Model
@@ -139,8 +139,8 @@ These areas can now be passed to the ``collapsed`` method as weights:
               altitude                       -                      x
          Scalar coordinates:
               forecast_reference_time: 2009-11-19 04:00:00
-              grid_latitude: 1.51455 degrees, bound=(0.1443, 2.8848) degrees
-              grid_longitude: 358.749 degrees, bound=(357.494, 360.005) degrees
+              grid_latitude: 1.5145501 degrees, bound=(0.14430022, 2.8848) degrees
+              grid_longitude: 358.74948 degrees, bound=(357.494, 360.00497) degrees
               surface_altitude: 399.625 m, bound=(-14.0, 813.25) m
          Attributes:
               STASH: m01s00i004
@@ -198,6 +198,7 @@ to represent the climatological seasons and the season year respectively::
 
 .. testsetup:: aggregation
 
+    import datetime
     import iris
 
     filename = iris.sample_data_path('ostia_monthly.nc')
@@ -301,7 +302,8 @@ do not cover a three month period (note: judged here as > 3*28 days):
 
 .. doctest:: aggregation
 
-    >>> spans_three_months = lambda t: (t.bound[1] - t.bound[0]) > 3*28*24.0
+    >>> tdelta_3mth = datetime.timedelta(hours=3*28*24.0)
+    >>> spans_three_months = lambda t: (t.bound[1] - t.bound[0]) > tdelta_3mth
     >>> three_months_bound = iris.Constraint(time=spans_three_months)
     >>> full_season_means = annual_seasonal_mean.extract(three_months_bound)
     >>> full_season_means

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -14,7 +14,7 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with Iris.  If not, see <http://www.gnu.org/licenses/>.
-"""Unit tests for :mod:`iris.fileformats.grib._save_rules`."""
+"""Integration tests for :mod:`iris_grib._save_rules`."""
 
 from __future__ import (absolute_import, division, print_function)
 from six.moves import (filter, input, map, range, zip)  # noqa
@@ -33,7 +33,7 @@ from iris.tests import mock
 
 if tests.GRIB_AVAILABLE:
     import gribapi
-    import iris.fileformats.grib._save_rules as grib_save_rules
+    import iris_grib._save_rules as grib_save_rules
 else:
     gribapi = None
 

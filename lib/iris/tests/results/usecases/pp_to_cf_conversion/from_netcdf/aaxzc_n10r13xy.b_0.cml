@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <cubes xmlns="urn:x-iris:cubeml-0.2">
-  <cube standard_name="air_temperature" units="K" var_name="air_temperature">
+  <cube dtype="float32" standard_name="air_temperature" units="K" var_name="air_temperature">
     <attributes>
       <attribute name="Conventions" value="CF-1.5"/>
       <attribute name="source" value="Data from Met Office Unified Model"/>
@@ -42,6 +42,6 @@
         <coord interval="1 hour" name="time"/>
       </cellMethod>
     </cellMethods>
-    <data checksum="0x8b5afb47" dtype="float32" shape="(4, 13, 10)"/>
+    <data checksum="0x8b5afb47" dtype="float32" mask_checksum="no-masked-elements" shape="(4, 13, 10)"/>
   </cube>
 </cubes>

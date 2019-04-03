@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -60,6 +60,7 @@ def _load_theta():
 @tests.skip_plot
 class TestQuickplotCoordinatesGiven(test_plot.TestPlotCoordinatesGiven):
     def setUp(self):
+        tests.GraphicsTest.setUp(self)
         filename = tests.get_data_path(('PP', 'COLPEX', 'theta_and_orog_subset.pp'))
         self.cube = test_plot.load_cube_once(filename, 'air_potential_temperature')
 
@@ -110,6 +111,7 @@ class TestQuickplotCoordinatesGiven(test_plot.TestPlotCoordinatesGiven):
 @tests.skip_plot
 class TestLabels(tests.GraphicsTest):
     def setUp(self):
+        super(TestLabels, self).setUp()
         self.theta = _load_theta()
 
     def _slice(self, coords):
@@ -144,9 +146,36 @@ class TestLabels(tests.GraphicsTest):
         qplt.contourf(self._small(), coords=['grid_longitude', 'model_level_number'])
         self.check_graphic()
 
+    def test_contourf_axes_specified(self):
+        # Check that the contourf function does not modify the matplotlib
+        # pyplot state machine.
+
+        # Create a figure and axes to be used by contourf
+        plt.figure()
+        axes1 = plt.axes()
+
+        # Create test figure and axes which will be the new results
+        # of plt.gcf and plt.gca.
+        plt.figure()
+        axes2 = plt.axes()
+
+        # Add a title to the test axes.
+        plt.title('This should not be changed')
+        # Draw the contourf on a specific axes.
+        qplt.contourf(self._small(), axes=axes1)
+
+        # Ensure that the correct axes got the appropriate title.
+        self.assertEqual(axes2.get_title(), 'This should not be changed')
+        self.assertEqual(axes1.get_title(), 'Air potential temperature')
+
+        # Check that the axes labels were set correctly.
+        self.assertEqual(axes1.get_xlabel(), 'Grid longitude / degrees')
+        self.assertEqual(axes1.get_ylabel(), 'Altitude / m')
+
     def test_contourf_nameless(self):
         cube = self._small()
         cube.standard_name = None
+        cube.attributes['STASH'] = ''
         qplt.contourf(cube, coords=['grid_longitude', 'model_level_number'])
         self.check_graphic()
 
@@ -184,8 +213,8 @@ class TestLabels(tests.GraphicsTest):
 @tests.skip_data
 @tests.skip_plot
 class TestTimeReferenceUnitsLabels(tests.GraphicsTest):
-
     def setUp(self):
+        super(TestTimeReferenceUnitsLabels, self).setUp()
         path = tests.get_data_path(('PP', 'aPProt1', 'rotatedMHtimecube.pp'))
         self.cube = iris.load_cube(path)[:, 0, 0]
 

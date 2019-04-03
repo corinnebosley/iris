@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2019, Met Office
 #
 # This file is part of Iris.
 #
@@ -51,8 +51,9 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 import six
 
 import collections
+from functools import wraps
 
-import biggus
+import dask.array as da
 import numpy as np
 import numpy.ma as ma
 import scipy.interpolate
@@ -64,13 +65,13 @@ from iris.analysis._interpolation import (EXTRAPOLATION_MODES,
 from iris.analysis._regrid import RectilinearRegridder
 import iris.coords
 from iris.exceptions import LazyAggregatorError
-
+import iris._lazy_data
 
 __all__ = ('COUNT', 'GMEAN', 'HMEAN', 'MAX', 'MEAN', 'MEDIAN', 'MIN',
            'PEAK', 'PERCENTILE', 'PROPORTION', 'RMS', 'STD_DEV', 'SUM',
            'VARIANCE', 'WPERCENTILE', 'coord_comparison', 'Aggregator',
            'WeightedAggregator', 'clear_phenomenon_identity', 'Linear',
-           'AreaWeighted', 'Nearest')
+           'AreaWeighted', 'Nearest', 'UnstructuredNearest')
 
 
 class _CoordGroup(object):
@@ -252,7 +253,7 @@ def coord_comparison(*cubes):
                     for other_coord in all_coords[other_cube_i]:
                         # for optimisation, check that the name is equivalent
                         # *before* checking all of the metadata is equivalent
-                        eq = (id(other_coord) not in processed_coords and
+                        eq = (other_coord is coord or
                               other_coord.name() == coord.name() and
                               other_coord._as_defn() == coord._as_defn())
                         if eq:
@@ -284,39 +285,50 @@ def coord_comparison(*cubes):
 
         # Get all coordinate groups which aren't complete (i.e. there is a
         # None in the group)
-        coord_is_None_fn = lambda cube, coord: coord is None
+        def coord_is_None_fn(cube, coord):
+            return coord is None
+
         if coord_group.matches_any(coord_is_None_fn):
             ungroupable.add(coord_group)
 
         # Get all coordinate groups which don't all equal one another
         # (None -> group not all equal)
-        not_equal_fn = lambda cube, coord: coord != first_coord
+        def not_equal_fn(cube, coord):
+            return coord != first_coord
+
         if coord_group.matches_any(not_equal_fn):
             not_equal.add(coord_group)
 
         # Get all coordinate groups which don't all share the same shape
         # (None -> group has different shapes)
-        diff_shape_fn = lambda cube, coord: coord.shape != first_coord.shape
+        def diff_shape_fn(cube, coord):
+            return coord.shape != first_coord.shape
+
         if coord_group.matches_any(diff_shape_fn):
             different_shaped_coords.add(coord_group)
 
         # Get all coordinate groups which don't all share the same data
         # dimension on their respective cubes
         # (None -> group describes a different dimension)
-        diff_data_dim_fn = lambda cube, coord: \
-            cube.coord_dims(coord) != first_cube.coord_dims(first_coord)
+        def diff_data_dim_fn(cube, coord):
+            return cube.coord_dims(coord) != first_cube.coord_dims(first_coord)
+
         if coord_group.matches_any(diff_data_dim_fn):
             different_data_dimension.add(coord_group)
 
         # get all coordinate groups which don't describe a dimension
         # (None -> doesn't describe a dimension)
-        no_data_dim_fn = lambda cube, coord: cube.coord_dims(coord) == ()
+        def no_data_dim_fn(cube, coord):
+            return cube.coord_dims(coord) == ()
+
         if coord_group.matches_all(no_data_dim_fn):
             no_data_dimension.add(coord_group)
 
         # get all coordinate groups which don't describe a dimension
         # (None -> not a scalar coordinate)
-        no_data_dim_fn = lambda cube, coord: coord.shape == (1, )
+        def no_data_dim_fn(cube, coord):
+            return coord.shape == (1, )
+
         if coord_group.matches_all(no_data_dim_fn):
             scalar_coords.add(coord_group)
 
@@ -430,7 +442,7 @@ class _Aggregator(object):
         Args:
 
         * data (array):
-            A lazy array (:class:`biggus.Array`).
+            A lazy array (:class:`dask.array.Array`).
 
         * axis (int or list of int):
             The dimensions to aggregate over -- note that this is defined
@@ -445,7 +457,7 @@ class _Aggregator(object):
 
         Returns:
             A lazy array representing the aggregation operation
-            (:class:`biggus.Array`).
+            (:class:`dask.array.Array`).
 
         """
         if self.lazy_func is None:
@@ -456,7 +468,7 @@ class _Aggregator(object):
         # provided to __init__.
         kwargs = dict(list(self._kwargs.items()) + list(kwargs.items()))
 
-        return self.lazy_func(data, axis, **kwargs)
+        return self.lazy_func(data, axis=axis, **kwargs)
 
     def aggregate(self, data, axis, **kwargs):
         """
@@ -551,11 +563,7 @@ class _Aggregator(object):
             The collapsed cube with its aggregated data payload.
 
         """
-        if isinstance(data_result, biggus.Array):
-            collapsed_cube.lazy_data(data_result)
-        else:
-            collapsed_cube.data = data_result
-
+        collapsed_cube.data = data_result
         return collapsed_cube
 
     def aggregate_shape(self, **kwargs):
@@ -1007,7 +1015,42 @@ class WeightedAggregator(Aggregator):
         return result
 
 
-def _percentile(data, axis, percent, **kwargs):
+def _build_dask_mdtol_function(dask_stats_function):
+    """
+    Make a wrapped dask statistic function that supports the 'mdtol' keyword.
+
+    'dask_function' must be a dask statistical function, compatible with the
+    call signature : "dask_stats_function(data, axis=axis, **kwargs)".
+    It must be masked-data tolerant, i.e. it ignores masked input points and
+    performs a calculation on only the unmasked points.
+    For example, mean([1, --, 2]) = (1 + 2) / 2 = 1.5.
+
+    The returned value is a new function operating on dask arrays.
+    It has the call signature `stat(data, axis=-1, mdtol=None, **kwargs)`.
+
+    """
+    @wraps(dask_stats_function)
+    def inner_stat(array, axis=-1, mdtol=None, **kwargs):
+        # Call the statistic to get the basic result (missing-data tolerant).
+        dask_result = dask_stats_function(array, axis=axis, **kwargs)
+        if mdtol is None or mdtol >= 1.0:
+            result = dask_result
+        else:
+            # Build a lazy computation to compare the fraction of missing
+            # input points at each output point to the 'mdtol' threshold.
+            point_mask_counts = da.sum(da.ma.getmaskarray(array), axis=axis)
+            points_per_calc = array.size / dask_result.size
+            masked_point_fractions = point_mask_counts / points_per_calc
+            boolean_mask = masked_point_fractions > mdtol
+            # Return an mdtol-masked version of the basic result.
+            result = da.ma.masked_array(da.ma.getdata(dask_result),
+                                        boolean_mask)
+        return result
+    return inner_stat
+
+
+def _percentile(data, axis, percent, fast_percentile_method=False,
+                **kwargs):
     """
     The percentile aggregator is an additive operation. This means that
     it *may* introduce a new dimension to the data for the statistic being
@@ -1016,18 +1059,34 @@ def _percentile(data, axis, percent, **kwargs):
     If a new additive dimension is formed, then it will always be the last
     dimension of the resulting percentile data payload.
 
+    Kwargs:
+
+    * fast_percentile_method (boolean) :
+        When set to True, uses the numpy.percentiles method as a faster
+        alternative to the scipy.mstats.mquantiles method. Does not handle
+        masked arrays.
+
     """
     # Ensure that the target axis is the last dimension.
     data = np.rollaxis(data, axis, start=data.ndim)
-    quantiles = np.array(percent) / 100.
     shape = data.shape[:-1]
     # Flatten any leading dimensions.
     if shape:
         data = data.reshape([np.prod(shape), data.shape[-1]])
     # Perform the percentile calculation.
-    result = scipy.stats.mstats.mquantiles(data, quantiles, axis=-1, **kwargs)
+    if fast_percentile_method:
+        msg = 'Cannot use fast np.percentile method with masked array.'
+        if ma.isMaskedArray(data):
+            raise TypeError(msg)
+        result = np.percentile(data, percent, axis=-1)
+        result = result.T
+    else:
+        quantiles = np.array(percent) / 100.
+        result = scipy.stats.mstats.mquantiles(data, quantiles, axis=-1,
+                                               **kwargs)
     if not ma.isMaskedArray(data) and not ma.is_masked(result):
         result = np.asarray(result)
+
     # Ensure to unflatten any leading dimensions.
     if shape:
         if not isinstance(percent, collections.Iterable):
@@ -1069,7 +1128,7 @@ def _weighted_quantile_1D(data, weights, quantiles, **kwargs):
         of weights is zero or masked)
     """
     # Return np.nan if no useable points found
-    if np.isclose(weights.sum(), 0.) or weights.sum() is ma.masked:
+    if np.isclose(weights.sum(), 0.) or ma.is_masked(weights.sum()):
         return np.resize(np.array(np.nan), len(quantiles))
     # Sort the data
     ind_sorted = ma.argsort(data)
@@ -1166,49 +1225,87 @@ def _weighted_percentile(data, axis, weights, percent, returned=False,
         return result
 
 
-def _count(array, function, axis, **kwargs):
-    if not callable(function):
-        raise ValueError('function must be a callable. Got %s.'
-                         % type(function))
-    return ma.sum(function(array), axis=axis, **kwargs)
+@_build_dask_mdtol_function
+def _lazy_count(array, **kwargs):
+    array = iris._lazy_data.as_lazy_data(array)
+    func = kwargs.pop('function', None)
+    if not callable(func):
+        emsg = 'function must be a callable. Got {}.'
+        raise TypeError(emsg.format(type(func)))
+    return da.sum(func(array), **kwargs)
 
 
 def _proportion(array, function, axis, **kwargs):
+    count = iris._lazy_data.non_lazy(_lazy_count)
     # if the incoming array is masked use that to count the total number of
     # values
-    if isinstance(array, ma.MaskedArray):
+    if ma.isMaskedArray(array):
         # calculate the total number of non-masked values across the given axis
-        total_non_masked = _count(array.mask, np.logical_not,
-                                  axis=axis, **kwargs)
-        total_non_masked = ma.masked_equal(total_non_masked, 0)
+        if array.mask is np.bool_(False):
+            # numpy will return a single boolean as a mask if the mask
+            # was not explicitly specified on array construction, so in this
+            # case pass the array shape instead of the mask:
+            total_non_masked = array.shape[axis]
+        else:
+            total_non_masked = count(
+                array.mask, axis=axis, function=np.logical_not, **kwargs)
+            total_non_masked = ma.masked_equal(total_non_masked, 0)
     else:
         total_non_masked = array.shape[axis]
 
-    return _count(array, function, axis=axis, **kwargs) / total_non_masked
+    # Sanitise the result of this operation thru ma.asarray to ensure that
+    # the dtype of the fill-value and the dtype of the array are aligned.
+    # Otherwise, it is possible for numpy to return a masked array that has
+    # a dtype for its data that is different to the dtype of the fill-value,
+    # which can cause issues outside this function.
+    # Reference - tests/unit/analyis/test_PROPORTION.py Test_masked.test_ma
+    numerator = count(array, axis=axis, function=function, **kwargs)
+    result = ma.asarray(numerator / total_non_masked)
+
+    return result
 
 
 def _rms(array, axis, **kwargs):
+    # XXX due to the current limitations in `da.average` (see below), maintain
+    # an explicit non-lazy aggregation function for now.
+    # Note: retaining this function also means that if weights are passed to
+    # the lazy aggregator, the aggregation will fall back to using this
+    # non-lazy aggregator.
     rval = np.sqrt(ma.average(np.square(array), axis=axis, **kwargs))
     if not ma.isMaskedArray(array):
         rval = np.asarray(rval)
     return rval
 
 
-def _sum(array, **kwargs):
+@_build_dask_mdtol_function
+def _lazy_rms(array, axis, **kwargs):
+    # XXX This should use `da.average` and not `da.mean`, as does the above.
+    # However `da.average` current doesn't handle masked weights correctly
+    # (see https://github.com/dask/dask/issues/3846).
+    # To work around this we use da.mean, which doesn't support weights at
+    # all. Thus trying to use this aggregator with weights will currently
+    # raise an error in dask due to the unexpected keyword `weights`,
+    # rather than silently returning the wrong answer.
+    return da.sqrt(da.mean(array ** 2, axis=axis, **kwargs))
+
+
+@_build_dask_mdtol_function
+def _lazy_sum(array, **kwargs):
+    array = iris._lazy_data.as_lazy_data(array)
     # weighted or scaled sum
     axis_in = kwargs.get('axis', None)
     weights_in = kwargs.pop('weights', None)
     returned_in = kwargs.pop('returned', False)
     if weights_in is not None:
-        wsum = ma.sum(weights_in * array, **kwargs)
+        wsum = da.sum(weights_in * array, **kwargs)
     else:
-        wsum = ma.sum(array, **kwargs)
+        wsum = da.sum(array, **kwargs)
     if returned_in:
         if weights_in is None:
-            weights = np.ones_like(array)
+            weights = iris._lazy_data.as_lazy_data(np.ones_like(array))
         else:
             weights = weights_in
-        rvalue = (wsum, ma.sum(weights, axis=axis_in))
+        rvalue = (wsum, da.sum(weights, axis=axis_in))
     else:
         rvalue = wsum
     return rvalue
@@ -1318,8 +1415,9 @@ def _peak(array, **kwargs):
 #
 # Common partial Aggregation class constructors.
 #
-COUNT = Aggregator('count', _count,
-                   units_func=lambda units: 1)
+COUNT = Aggregator('count', iris._lazy_data.non_lazy(_lazy_count),
+                   units_func=lambda units: 1,
+                   lazy_func=_lazy_count)
 """
 An :class:`~iris.analysis.Aggregator` instance that counts the number
 of :class:`~iris.cube.Cube` data occurrences that satisfy a particular
@@ -1385,24 +1483,8 @@ This aggregator handles masked data.
 """
 
 
-MAX = Aggregator('maximum', ma.max)
-"""
-An :class:`~iris.analysis.Aggregator` instance that calculates
-the maximum over a :class:`~iris.cube.Cube`, as computed by
-:func:`numpy.ma.max`.
-
-**For example**:
-
-To compute zonal maximums over the *longitude* axis of a cube::
-
-    result = cube.collapsed('longitude', iris.analysis.MAX)
-
-This aggregator handles masked data.
-
-"""
-
-
-MEAN = WeightedAggregator('mean', ma.average, lazy_func=biggus.mean)
+MEAN = WeightedAggregator('mean', ma.average,
+                          lazy_func=_build_dask_mdtol_function(da.mean))
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the mean over a :class:`~iris.cube.Cube`, as computed by
@@ -1442,7 +1524,7 @@ To compute a weighted area average::
 
 .. note::
 
-    Lazy operation is supported, via :func:`biggus.mean`.
+    Lazy operation is supported, via :func:`dask.array.nanmean`.
 
 This aggregator handles masked data.
 
@@ -1466,7 +1548,8 @@ This aggregator handles masked data.
 """
 
 
-MIN = Aggregator('minimum', ma.min)
+MIN = Aggregator('minimum', ma.min,
+                 lazy_func=_build_dask_mdtol_function(da.min))
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the minimum over a :class:`~iris.cube.Cube`, as computed by
@@ -1477,6 +1560,24 @@ the minimum over a :class:`~iris.cube.Cube`, as computed by
 To compute zonal minimums over the *longitude* axis of a cube::
 
     result = cube.collapsed('longitude', iris.analysis.MIN)
+
+This aggregator handles masked data.
+
+"""
+
+
+MAX = Aggregator('maximum', ma.max,
+                 lazy_func=_build_dask_mdtol_function(da.max))
+"""
+An :class:`~iris.analysis.Aggregator` instance that calculates
+the maximum over a :class:`~iris.cube.Cube`, as computed by
+:func:`numpy.ma.max`.
+
+**For example**:
+
+To compute zonal maximums over the *longitude* axis of a cube::
+
+    result = cube.collapsed('longitude', iris.analysis.MAX)
 
 This aggregator handles masked data.
 
@@ -1576,7 +1677,8 @@ This aggregator handles masked data.
 """
 
 
-RMS = WeightedAggregator('root mean square', _rms)
+RMS = WeightedAggregator('root mean square', _rms,
+                         lazy_func=_build_dask_mdtol_function(_lazy_rms))
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the root mean square over a :class:`~iris.cube.Cube`, as computed by
@@ -1601,7 +1703,7 @@ This aggregator handles masked data.
 
 
 STD_DEV = Aggregator('standard_deviation', ma.std, ddof=1,
-                     lazy_func=biggus.std)
+                     lazy_func=_build_dask_mdtol_function(da.std))
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the standard deviation over a :class:`~iris.cube.Cube`, as
@@ -1625,14 +1727,15 @@ To obtain the biased standard deviation::
 
 .. note::
 
-    Lazy operation is supported, via :func:`biggus.std`.
+    Lazy operation is supported, via :func:`dask.array.nanstd`.
 
 This aggregator handles masked data.
 
 """
 
 
-SUM = WeightedAggregator('sum', _sum)
+SUM = WeightedAggregator('sum', iris._lazy_data.non_lazy(_lazy_sum),
+                         lazy_func=_build_dask_mdtol_function(_lazy_sum))
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the sum over a :class:`~iris.cube.Cube`, as computed by :func:`numpy.ma.sum`.
@@ -1668,7 +1771,8 @@ This aggregator handles masked data.
 VARIANCE = Aggregator('variance',
                       ma.var,
                       units_func=lambda units: units * units,
-                      lazy_func=biggus.var, ddof=1)
+                      lazy_func=_build_dask_mdtol_function(da.var),
+                      ddof=1)
 """
 An :class:`~iris.analysis.Aggregator` instance that calculates
 the variance over a :class:`~iris.cube.Cube`, as computed by
@@ -1692,7 +1796,7 @@ To obtain the biased variance::
 
 .. note::
 
-    Lazy operation is supported, via :func:`biggus.var`.
+    Lazy operation is supported, via :func:`dask.array.nanvar`.
 
 This aggregator handles masked data.
 
@@ -1761,9 +1865,10 @@ class _Groupby(object):
 
         Kwargs:
 
-        * shared_coords (list of :class:`iris.coords.Coord` instances):
-            One or more coordinates that share the same group-by
-            coordinate axis.
+        * shared_coords (list of (:class:`iris.coords.Coord`, `int`) pairs):
+            One or more coordinates (including multidimensional coordinates)
+            that share the same group-by coordinate axis.  The `int` identifies
+            which dimension of the coord is on the group-by coordinate axis.
 
         """
         #: Group-by and shared coordinates that have been grouped.
@@ -1788,8 +1893,8 @@ class _Groupby(object):
                 raise TypeError('shared_coords must be a '
                                 '`collections.Iterable` type.')
             # Add valid shared coordinates.
-            for coord in shared_coords:
-                self._add_shared_coord(coord)
+            for coord, dim in shared_coords:
+                self._add_shared_coord(coord, dim)
 
     def _add_groupby_coord(self, coord):
         if coord.ndim != 1:
@@ -1800,12 +1905,10 @@ class _Groupby(object):
             raise ValueError('Group-by coordinates have different lengths.')
         self._groupby_coords.append(coord)
 
-    def _add_shared_coord(self, coord):
-        if coord.ndim != 1:
-            raise iris.exceptions.CoordinateMultiDimError(coord)
-        if coord.shape[0] != self._stop and self._stop is not None:
+    def _add_shared_coord(self, coord, dim):
+        if coord.shape[dim] != self._stop and self._stop is not None:
             raise ValueError('Shared coordinates have different lengths.')
-        self._shared_coords.append(coord)
+        self._shared_coords.append((coord, dim))
 
     def group(self):
         """
@@ -1932,18 +2035,36 @@ class _Groupby(object):
                 groupby_bounds.append((key_slice.start, key_slice.stop-1))
 
         # Create new shared bounded coordinates.
-        for coord in self._shared_coords:
+        for coord, dim in self._shared_coords:
             if coord.points.dtype.kind in 'SU':
                 if coord.bounds is None:
                     new_points = []
                     new_bounds = None
+                    # np.apply_along_axis does not work with str.join, so we
+                    # need to loop through the array directly. First move axis
+                    # of interest to trailing dim and flatten the others.
+                    work_arr = np.moveaxis(coord.points, dim, -1)
+                    shape = work_arr.shape
+                    work_shape = (-1, shape[-1])
+                    new_shape = (len(self),)
+                    if coord.ndim > 1:
+                        new_shape += shape[:-1]
+                    work_arr = work_arr.reshape(work_shape)
+
                     for key_slice in six.itervalues(self._slices_by_key):
                         if isinstance(key_slice, slice):
-                            indices = key_slice.indices(coord.points.shape[0])
+                            indices = key_slice.indices(
+                                coord.points.shape[dim])
                             key_slice = range(*indices)
-                        new_pt = '|'.join([coord.points[i]
-                                           for i in key_slice])
-                        new_points.append(new_pt)
+
+                        for arr in work_arr:
+                            new_points.append('|'.join(arr.take(key_slice)))
+
+                    # Reinstate flattened dimensions. Aggregated dim now leads.
+                    new_points = np.array(new_points).reshape(new_shape)
+
+                    # Move aggregated dimension back to position it started in.
+                    new_points = np.moveaxis(new_points, 0, dim)
                 else:
                     msg = ('collapsing the bounded string coordinate {0!r}'
                            ' is not supported'.format(coord.name()))
@@ -1956,27 +2077,35 @@ class _Groupby(object):
                     if coord.has_bounds():
                         # Collapse group bounds into bounds.
                         if (getattr(coord, 'circular', False) and
-                                (stop + 1) == len(coord.points)):
-                            new_bounds.append([coord.bounds[start, 0],
-                                              coord.bounds[0, 0] +
-                                              coord.units.modulus])
+                                (stop + 1) == coord.shape[dim]):
+                            new_bounds.append(
+                                [coord.bounds.take(start, dim).take(0, -1),
+                                 coord.bounds.take(0, dim).take(0, -1) +
+                                 coord.units.modulus])
                         else:
-                            new_bounds.append([coord.bounds[start, 0],
-                                              coord.bounds[stop, 1]])
+                            new_bounds.append(
+                                [coord.bounds.take(start, dim).take(0, -1),
+                                 coord.bounds.take(stop, dim).take(1, -1)])
                     else:
                         # Collapse group points into bounds.
                         if (getattr(coord, 'circular', False) and
                                 (stop + 1) == len(coord.points)):
-                            new_bounds.append([coord.points[start],
-                                              coord.points[0] +
-                                              coord.units.modulus])
+                            new_bounds.append([coord.points.take(start, dim),
+                                               coord.points.take(0, dim) +
+                                               coord.units.modulus])
                         else:
-                            new_bounds.append([coord.points[start],
-                                              coord.points[stop]])
+                            new_bounds.append([coord.points.take(start, dim),
+                                               coord.points.take(stop, dim)])
+
+                # Bounds needs to be an array with the length 2 start-stop
+                # dimension last, and the aggregated dimension back in its
+                # original position.
+                new_bounds = np.moveaxis(
+                    np.array(new_bounds), (0, 1), (dim, -1))
 
                 # Now create the new bounded group shared coordinate.
                 try:
-                    new_points = np.array(new_bounds).mean(-1)
+                    new_points = new_bounds.mean(-1)
                 except TypeError:
                     msg = 'The {0!r} coordinate on the collapsing dimension' \
                           ' cannot be collapsed.'.format(coord.name())
@@ -2112,7 +2241,7 @@ class Linear(object):
 
             The values for coordinates that correspond to date/times
             may optionally be supplied as datetime.datetime or
-            netcdftime.datetime instances.
+            cftime.datetime instances.
 
             For example, for the callable returned by:
             `Linear().interpolator(cube, ['latitude', 'longitude'])`,
@@ -2155,16 +2284,17 @@ class Linear(object):
 
 class AreaWeighted(object):
     """
-    This class describes the area-weighted regridding scheme for regridding
-    over one or more orthogonal coordinates, typically for use with
-    :meth:`iris.cube.Cube.regrid()`.
+    This class describes an area-weighted regridding scheme for regridding
+    between 'ordinary' horizontal grids with separated X and Y coordinates in a
+    common coordinate system.
+    Typically for use with :meth:`iris.cube.Cube.regrid()`.
 
     """
 
     def __init__(self, mdtol=1):
         """
-        Area-weighted regridding scheme suitable for regridding one or more
-        orthogonal coordinates.
+        Area-weighted regridding scheme suitable for regridding between
+        different orthogonal XY grids in the same coordinate system.
 
         Kwargs:
 
@@ -2176,6 +2306,12 @@ class AreaWeighted(object):
             data is tolerated while mdtol=1 will mean the resulting element
             will be masked if and only if all the overlapping elements of the
             source grid are masked. Defaults to 1.
+
+        .. Note:
+            Both sourge and target cubes must have an XY grid defined by
+            separate X and Y dimensions with dimension coordinates.
+            All of the XY dimension coordinates must also be bounded, and have
+            the same cooordinate system.
 
         """
         if not (0 <= mdtol <= 1):
@@ -2288,7 +2424,7 @@ class Nearest(object):
 
             The values for coordinates that correspond to date/times
             may optionally be supplied as datetime.datetime or
-            netcdftime.datetime instances.
+            cftime.datetime instances.
 
             For example, for the callable returned by:
             `Nearest().interpolator(cube, ['latitude', 'longitude'])`,
@@ -2327,3 +2463,94 @@ class Nearest(object):
         """
         return RectilinearRegridder(src_grid, target_grid, 'nearest',
                                     self.extrapolation_mode)
+
+
+class UnstructuredNearest(object):
+    """
+    This is a nearest-neighbour regridding scheme for regridding data whose
+    horizontal (X- and Y-axis) coordinates are mapped to the *same* dimensions,
+    rather than being orthogonal on independent dimensions.
+
+    For latitude-longitude coordinates, the nearest-neighbour distances are
+    computed on the sphere, otherwise flat Euclidean distances are used.
+
+    The source X and Y coordinates can have any shape.
+
+    The target grid must be of the "normal" kind, i.e. it has separate,
+    1-dimensional X and Y coordinates.
+
+    Source and target XY coordinates must have the same coordinate system,
+    which may also be None.
+    If any of the XY coordinates are latitudes or longitudes, then they *all*
+    must be.  Otherwise, the corresponding X and Y coordinates must have the
+    same units in the source and grid cubes.
+
+    .. Note::
+        Currently only supports regridding, not interpolation.
+
+    .. Note::
+          This scheme performs essentially the same job as
+          :class:`iris.experimental.regrid.ProjectedUnstructuredNearest`.
+          That scheme is faster, but only works well on data in a limited
+          region of the globe, covered by a specified projection.
+          This approach is more rigorously correct and can be applied to global
+          datasets.
+
+    """
+    # Note: the argument requirements are simply those of the underlying
+    # regridder class,
+    # :class:`iris.analysis.trajectory.UnstructuredNearestNeigbourRegridder`.
+    def __init__(self):
+        """
+        Nearest-neighbour interpolation and regridding scheme suitable for
+        interpolating or regridding from un-gridded data such as trajectories
+        or other data where the X and Y coordinates share the same dimensions.
+
+        """
+        pass
+
+    def __repr__(self):
+        return 'UnstructuredNearest()'
+
+    # TODO: add interpolator usage
+    # def interpolator(self, cube):
+
+    def regridder(self, src_cube, target_grid):
+        """
+        Creates a nearest-neighbour regridder, of the
+        :class:`~iris.analysis.trajectory.UnstructuredNearestNeigbourRegridder`
+        type, to perform regridding from the source grid to the target grid.
+
+        This can then be applied to any source data with the same structure as
+        the original 'src_cube'.
+
+        Typically you should use :meth:`iris.cube.Cube.regrid` for
+        regridding a cube. There are, however, some situations when
+        constructing your own regridder is preferable. These are detailed in
+        the :ref:`user guide <caching_a_regridder>`.
+
+        Args:
+
+        * src_cube:
+            The :class:`~iris.cube.Cube` defining the source grid.
+            The X and Y coordinates can have any shape, but must be mapped over
+            the same cube dimensions.
+
+        * target_grid:
+            The :class:`~iris.cube.Cube` defining the target grid.
+            The X and Y coordinates must be one-dimensional dimension
+            coordinates, mapped to different dimensions.
+            All other cube components are ignored.
+
+        Returns:
+            A callable with the interface:
+
+                `callable(cube)`
+
+            where `cube` is a cube with the same grid as `src_cube`
+            that is to be regridded to the `target_grid`.
+
+        """
+        from iris.analysis.trajectory import \
+            UnstructuredNearestNeigbourRegridder
+        return UnstructuredNearestNeigbourRegridder(src_cube, target_grid)

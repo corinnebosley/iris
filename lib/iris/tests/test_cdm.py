@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2016, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -41,6 +41,7 @@ import iris.analysis
 import iris.coords
 import iris.cube
 import iris.fileformats
+import iris.fileformats.dot
 import iris.tests.pp as pp
 import iris.tests.stock
 
@@ -54,7 +55,6 @@ class IrisDotTest(tests.IrisTest):
                 reference = ''.join(reference_fh.readlines())
             self._assert_str_same(reference, test_string, reference_filename, type_comparison_name='DOT files')
         else:
-            tests.logger.warning('Creating result file: %s', reference_path)
             with open(reference_path, 'w') as reference_fh:
                 reference_fh.writelines(test_string)
 
@@ -214,6 +214,7 @@ class TestBasicCubeConstruction(tests.IrisTest):
             dims[0] = 1
 
 
+@tests.skip_data
 class TestStockCubeStringRepresentations(tests.IrisTest):
     def setUp(self):
         self.cube = iris.tests.stock.realistic_4d()
@@ -276,10 +277,12 @@ class TestCubeStringRepresentations(IrisDotTest):
         del cube.attributes['my_attribute']
        
     # TODO hybrid height and dot output - relatitionship links
+    @tests.skip_data
     def test_dot_4d(self):
         cube = iris.tests.stock.realistic_4d()
         self.check_dot(cube, ('file_load', '4d_pp.dot'))
 
+    @tests.skip_data
     def test_missing_coords(self):
         cube = iris.tests.stock.realistic_4d()
         cube.remove_coord('time')
@@ -289,6 +292,7 @@ class TestCubeStringRepresentations(IrisDotTest):
         self.assertString(str(cube),
                           ('cdm', 'str_repr', 'missing_coords_cube.str.txt'))
 
+    @tests.skip_data
     def test_cubelist_string(self):
         cube_list = iris.cube.CubeList([iris.tests.stock.realistic_4d(),
                                         iris.tests.stock.global_pp()])
@@ -726,6 +730,16 @@ class TestCubeAPI(TestCube2d):
         self.t.var_name = 'bar'
         self.assertEqual(self.t.var_name, 'bar')
 
+    def test_default_name(self):
+        self.t.long_name = ''
+        self.assertEqual(self.t.name(), 'unknown')
+        self.assertEqual(self.t.name('a_default'), 'a_default')
+
+    def test_stash_name(self):
+        self.t.long_name = ''
+        self.t.attributes['STASH'] = iris.fileformats.pp.STASH(1, 2, 3)
+        self.assertEqual(self.t.name(), 'm01s02i003')
+
     def test_name_and_var_name(self):
         # Assign only var_name.
         self.t.standard_name = None
@@ -835,7 +849,7 @@ class TestCubeAPI(TestCube2d):
         with self.assertRaises(TypeError):
             self.t.metadata = ('air_pressure', 'foo', 'bar', '', {'random': '12'})
         with self.assertRaises(TypeError):
-            self.t.metadata = ('air_pressure', 'foo', 'bar', '', {'random': '12'}, (), [], ())
+            self.t.metadata = ('air_pressure', 'foo', 'bar', '', {'random': '12'}, (), [], (), ())
         with self.assertRaises(TypeError):
             self.t.metadata = {'standard_name': 'air_pressure',
                                'long_name': 'foo',
@@ -856,7 +870,7 @@ class TestCubeAPI(TestCube2d):
 class TestCubeEquality(TestCube2d):
     def test_simple_equality(self):
         self.assertEqual(self.t, self.t.copy())
-    
+
     def test_data_inequality(self):
         self.assertNotEqual(self.t, self.t + 1)
     
@@ -954,7 +968,7 @@ class TestDataManagerIndexing(TestCube2d):
         lat_cube = next(self.cube.slices(['grid_latitude', ]))
         self.assert_is_lazy(lat_cube)
         self.assert_is_lazy(self.cube)
- 
+
     def test_cube_empty_indexing(self):
         test_filename = ('cube_slice', 'real_empty_data_indexing.cml')
         r = self.cube[:5, ::-1][3]
@@ -1019,9 +1033,19 @@ class TestCubeCollapsed(tests.IrisTest):
         # compare dual and single stage collapsing
         dual_stage = cube.collapsed(a_name, iris.analysis.MEAN)
         dual_stage = dual_stage.collapsed(b_name, iris.analysis.MEAN)
+        # np.ma.average doesn't apply type promotion rules in some versions,
+        # and instead makes the result type float64. To ignore that case we
+        # fix up the dtype here if it is promotable from cube.dtype. We still
+        # want to catch cases where there is a loss of precision however.
+        if dual_stage.dtype > cube.dtype:
+            data = dual_stage.data.astype(cube.dtype)
+            dual_stage.data = data
         self.assertCMLApproxData(dual_stage, ('cube_collapsed', '%s_%s_dual_stage.cml' % (a_filename, b_filename)), *args, **kwargs)
 
         single_stage = cube.collapsed([a_name, b_name], iris.analysis.MEAN)
+        if single_stage.dtype > cube.dtype:
+            data = single_stage.data.astype(cube.dtype)
+            single_stage.data = data 
         self.assertCMLApproxData(single_stage, ('cube_collapsed', '%s_%s_single_stage.cml' % (a_filename, b_filename)), *args, **kwargs)
 
         # Compare the cube bits that should match
@@ -1038,39 +1062,66 @@ class TestCubeCollapsed(tests.IrisTest):
 
         self.assertCML(cube, ('cube_collapsed', 'original.cml'))
 
-        # Compare 2-stage collapsing with a single stage collapse over 2 Coords.
-        self.collapse_test_common(cube, 'grid_latitude', 'grid_longitude', decimal=1)
-        self.collapse_test_common(cube, 'grid_longitude', 'grid_latitude', decimal=1)
+        # Compare 2-stage collapsing with a single stage collapse
+        # over 2 Coords.
+        self.collapse_test_common(cube, 'grid_latitude', 'grid_longitude',
+                                  rtol=1e-05)
+        self.collapse_test_common(cube, 'grid_longitude', 'grid_latitude',
+                                  rtol=1e-05)
 
-        self.collapse_test_common(cube, 'time', 'grid_latitude', decimal=1)
-        self.collapse_test_common(cube, 'grid_latitude', 'time', decimal=1)
+        self.collapse_test_common(cube, 'time', 'grid_latitude', rtol=1e-05)
+        self.collapse_test_common(cube, 'grid_latitude', 'time', rtol=1e-05)
 
-        self.collapse_test_common(cube, 'time', 'grid_longitude', decimal=1)
-        self.collapse_test_common(cube, 'grid_longitude', 'time', decimal=1)
+        self.collapse_test_common(cube, 'time', 'grid_longitude', rtol=1e-05)
+        self.collapse_test_common(cube, 'grid_longitude', 'time', rtol=1e-05)
 
-        self.collapse_test_common(cube, 'grid_latitude', 'model_level_number', decimal=1)
-        self.collapse_test_common(cube, 'model_level_number', 'grid_latitude', decimal=1)
+        self.collapse_test_common(cube, 'grid_latitude', 'model_level_number',
+                                  rtol=5e-04)
+        self.collapse_test_common(cube, 'model_level_number', 'grid_latitude',
+                                  rtol=5e-04)
 
-        self.collapse_test_common(cube, 'grid_longitude', 'model_level_number', decimal=1)
-        self.collapse_test_common(cube, 'model_level_number', 'grid_longitude', decimal=1)
+        self.collapse_test_common(cube, 'grid_longitude', 'model_level_number',
+                                  rtol=5e-04)
+        self.collapse_test_common(cube, 'model_level_number', 'grid_longitude',
+                                  rtol=5e-04)
 
-        self.collapse_test_common(cube, 'time', 'model_level_number', decimal=1)
-        self.collapse_test_common(cube, 'model_level_number', 'time', decimal=1)
+        self.collapse_test_common(cube, 'time', 'model_level_number',
+                                  rtol=5e-04)
+        self.collapse_test_common(cube, 'model_level_number', 'time',
+                                  rtol=5e-04)
 
-        self.collapse_test_common(cube, 'model_level_number', 'time', decimal=1)
-        self.collapse_test_common(cube, 'time', 'model_level_number', decimal=1)
+        self.collapse_test_common(cube, 'model_level_number', 'time',
+                                  rtol=5e-04)
+        self.collapse_test_common(cube, 'time', 'model_level_number',
+                                  rtol=5e-04)
 
         # Collapse 3 things at once.
-        triple_collapse = cube.collapsed(['model_level_number', 'time', 'grid_longitude'], iris.analysis.MEAN)
-        self.assertCMLApproxData(triple_collapse, ('cube_collapsed', 'triple_collapse_ml_pt_lon.cml'), decimal=1)
+        triple_collapse = cube.collapsed(['model_level_number',
+                                          'time', 'grid_longitude'],
+                                          iris.analysis.MEAN)
+        self.assertCMLApproxData(triple_collapse, ('cube_collapsed',
+                                                   ('triple_collapse_ml_pt_'
+                                                    'lon.cml')),
+                                                   rtol=5e-04)
 
-        triple_collapse = cube.collapsed(['grid_latitude', 'model_level_number', 'time'], iris.analysis.MEAN)
-        self.assertCMLApproxData(triple_collapse, ('cube_collapsed', 'triple_collapse_lat_ml_pt.cml'), decimal=1)
+        triple_collapse = cube.collapsed(['grid_latitude',
+                                          'model_level_number', 'time'],
+                                          iris.analysis.MEAN)
+        self.assertCMLApproxData(triple_collapse, ('cube_collapsed',
+                                                   ('triple_collapse_lat_ml'
+                                                   '_pt.cml')),
+                                                   rtol=0.05)
+        # KNOWN PROBLEM: the previous 'rtol' is very large.
+        # Numpy 1.10 and 1.11 give significantly different results here.
+        # This may relate to known problems with summing over large arrays,
+        # which were largely fixed in numpy 1.9 but still occur in some cases,
+        # as-of numpy 1.11.
 
         # Ensure no side effects
         self.assertCML(cube, ('cube_collapsed', 'original.cml'))
-        
-        
+
+
+@tests.skip_data
 class TestTrimAttributes(tests.IrisTest):
     def test_non_string_attributes(self):
         cube = iris.tests.stock.realistic_4d()
@@ -1114,7 +1165,7 @@ class TestMaskedData(tests.IrisTest, pp.PPTest):
         cube = self._load_3d_cube()
         self.assertIsInstance(cube.data, ma.core.MaskedArray)
         self.assertCML(cube, ('cdm', 'masked_cube.cml'))
-        
+
     def test_slicing(self):
         cube = self._load_3d_cube()
 
@@ -1134,27 +1185,34 @@ class TestMaskedData(tests.IrisTest, pp.PPTest):
 
     def test_save_and_merge(self):
         cube = self._load_3d_cube()
+        dtype = cube.dtype
+        fill_value = 123456
 
         # extract the 2d field that has SOME missing values
         masked_slice = cube[0]
-        masked_slice.data.fill_value = 123456
-        
+        masked_slice.data.fill_value = fill_value
+
         # test saving masked data
         reference_txt_path = tests.get_result_path(('cdm', 'masked_save_pp.txt'))
         with self.cube_save_test(reference_txt_path, reference_cubes=masked_slice) as temp_pp_path:
             iris.save(masked_slice, temp_pp_path)
-        
+
             # test merge keeps the mdi we just saved
             cube1 = iris.load_cube(temp_pp_path)
+            self.assertEqual(cube1.dtype, dtype)
+
             cube2 = cube1.copy()
             # make cube1 and cube2 differ on a scalar coord, to make them mergeable into a 3d cube
-            cube2.coord("pressure").points[0] = 1001.0
+            cube2.coord("pressure").points = [1001.0]
             merged_cubes = iris.cube.CubeList([cube1, cube2]).merge()
             self.assertEqual(len(merged_cubes), 1, "expected a single merged cube")
             merged_cube = merged_cubes[0]
-            self.assertEqual(merged_cube.data.fill_value, 123456)
+            self.assertEqual(merged_cube.dtype, dtype)
+            # Check that the original masked-array fill-value is *ignored*.
+            self.assertArrayAllClose(merged_cube.data.fill_value, -1e30)
 
 
+@tests.skip_data
 class TestConversionToCoordList(tests.IrisTest):
     def test_coord_conversion(self):
         cube = iris.tests.stock.realistic_4d()

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2016, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -101,30 +101,33 @@ from six.moves import (filter, input, map, range, zip)  # noqa
 import six
 
 import contextlib
+import glob
 import itertools
-import logging
-import os
+import os.path
 import threading
 
 import iris.config
 import iris.cube
 import iris._constraints
+from iris._deprecation import IrisDeprecation, warn_deprecated
 import iris.fileformats
 import iris.io
 
 
+try:
+    import iris_sample_data
+except ImportError:
+    iris_sample_data = None
+
+
 # Iris revision.
-__version__ = '1.10.0-DEV'
+__version__ = '2.3.0dev0'
 
 # Restrict the names imported when using "from iris import *"
 __all__ = ['load', 'load_cube', 'load_cubes', 'load_raw',
            'save', 'Constraint', 'AttributeConstraint', 'sample_data_path',
-           'site_configuration', 'Future', 'FUTURE']
-
-
-# When required, log the usage of Iris.
-if iris.config.IMPORT_LOGGER:
-    logging.getLogger(iris.config.IMPORT_LOGGER).info('iris %s' % __version__)
+           'site_configuration', 'Future', 'FUTURE',
+           'IrisDeprecation']
 
 
 Constraint = iris._constraints.Constraint
@@ -134,63 +137,104 @@ AttributeConstraint = iris._constraints.AttributeConstraint
 class Future(threading.local):
     """Run-time configuration controller."""
 
-    def __init__(self, cell_datetime_objects=False, netcdf_promote=False,
-                 strict_grib_load=False, netcdf_no_unlimited=False):
+    def __init__(self, cell_datetime_objects=True, netcdf_promote=True,
+                 netcdf_no_unlimited=True, clip_latitudes=True):
         """
         A container for run-time options controls.
 
         To adjust the values simply update the relevant attribute from
         within your code. For example::
 
-            iris.FUTURE.cell_datetime_objects = True
+            iris.FUTURE.cell_datetime_objects = False
 
         If Iris code is executed with multiple threads, note the values of
         these options are thread-specific.
 
-        The option `cell_datetime_objects` controls whether the
-        :meth:`iris.coords.Coord.cell()` method returns time coordinate
-        values as simple numbers or as time objects with attributes for
-        year, month, day, etc. In particular, this allows one to express
-        certain time constraints using a simpler, more transparent
-        syntax, such as::
+        .. deprecated:: 2.0.0
 
-            # To select all data defined at midday.
-            Constraint(time=lambda cell: cell.point.hour == 12)
+            The option `cell_datetime_objects` is deprecated and will be
+            removed in a future release. `cell_datetime_objects` is set
+            to True by default and should not be altered.
 
-            # To ignore the 29th of February.
-            Constraint(time=lambda cell: cell.point.day != 29 and
-                                         cell.point.month != 2)
+            The option `cell_datetime_objects` controlled whether the
+            :meth:`iris.coords.Coord.cell()` method would return time
+            coordinate values as simple numbers or as time objects with
+            attributes for year, month, day, etc.
 
-        For more details, see :ref:`using-time-constraints`.
+            Cells are now represented as time objects by default, allowing
+            you to express time constraints using a simpler syntax. For
+            example::
 
-        The option `netcdf_promote` controls whether the netCDF loader
-        will expose variables which define reference surfaces for
-        dimensionless vertical coordinates as independent Cubes.
+                # To select all data defined at midday.
+                Constraint(time=lambda cell: cell.point.hour == 12)
 
-        The option `strict_grib_load` controls whether GRIB files are
-        loaded as Cubes using a new template-based conversion process.
-        This new conversion process will raise an exception when it
-        encounters a GRIB message which uses a template not supported
-        by the conversion.
+                # To ignore the 29th of February.
+                Constraint(time=lambda cell: cell.point.day != 29 and
+                                             cell.point.month != 2)
 
-        The option `netcdf_no_unlimited`, when True, changes the
-        behaviour of the netCDF saver, such that no dimensions are set to
-        unlimited.  The current default is that the leading dimension is
-        unlimited unless otherwise specified.
+            For more details, see :ref:`using-time-constraints`.
+
+        .. deprecated:: 2.0.0
+
+            The option `netcdf_promote` is deprecated and will be removed in a
+            future release and the deprecated code paths this option used to
+            toggle have been removed.
+
+            The option `netcdf_promote` controlled whether the netCDF loader
+            exposed variables that defined reference surfaces for
+            dimensionless vertical coordinates as independent Cubes.
+
+        .. deprecated:: 2.0.0
+
+            The option `netcdf_no_unlimited` is deprecated and will be removed
+            in a future release. The deprecated code paths this option used to
+            toggle have been removed.
+
+            The option `netcdf_no_unlimited` changed the behaviour of the
+            netCDF saver regarding unlimited dimensions. The netCDF saver now
+            sets no dimensions to unlimited.
+
+        .. deprecated:: 2.0.0
+
+            The option `clip_latitudes` is deprecated and will be removed in a
+            future release. `clip_latitudes` is set to True by default and
+            should not be altered.
+
+            The option `clip_latitudes` controlled whether the
+            :meth:`iris.coords.Coord.guess_bounds()` method would limit the
+            guessed bounds to [-90, 90] for latitudes.
 
         """
         self.__dict__['cell_datetime_objects'] = cell_datetime_objects
         self.__dict__['netcdf_promote'] = netcdf_promote
-        self.__dict__['strict_grib_load'] = strict_grib_load
         self.__dict__['netcdf_no_unlimited'] = netcdf_no_unlimited
+        self.__dict__['clip_latitudes'] = clip_latitudes
 
     def __repr__(self):
         msg = ('Future(cell_datetime_objects={}, netcdf_promote={}, '
-               'strict_grib_load={}, netcdf_no_unlimited={})')
+               'netcdf_no_unlimited={}, clip_latitudes={})')
         return msg.format(self.cell_datetime_objects, self.netcdf_promote,
-                          self.strict_grib_load, self.netcdf_no_unlimited)
+                          self.netcdf_no_unlimited, self.clip_latitudes)
+
+    deprecated_options = {'cell_datetime_objects': 'warning',
+                          'netcdf_no_unlimited': 'error',
+                          'netcdf_promote': 'error',
+                          'clip_latitudes': 'warning'}
 
     def __setattr__(self, name, value):
+        if name in self.deprecated_options:
+            level = self.deprecated_options[name]
+            if level == 'error' and not value:
+                emsg = ("setting the 'Future' property {prop!r} has been "
+                        "deprecated to be removed in a future release, and "
+                        "deprecated {prop!r} behaviour has been removed. "
+                        "Please remove code that sets this property.")
+                raise AttributeError(emsg.format(prop=name))
+            else:
+                msg = ("setting the 'Future' property {!r} is deprecated "
+                       "and will be removed in a future release. "
+                       "Please remove code that sets this property.")
+                warn_deprecated(msg.format(name))
         if name not in self.__dict__:
             msg = "'Future' object has no attribute {!r}".format(name)
             raise AttributeError(msg)
@@ -207,15 +251,8 @@ class Future(threading.local):
         statement, the previous state is restored.
 
         For example::
-
-            with iris.FUTURE.context():
-                iris.FUTURE.cell_datetime_objects = True
-                # ... code which expects time objects
-
-        Or more concisely::
-
-            with iris.FUTURE.context(cell_datetime_objects=True):
-                # ... code which expects time objects
+            with iris.FUTURE.context(cell_datetime_objects=False):
+                # ... code that expects numbers and not datetimes
 
         """
         # Save the current context
@@ -333,7 +370,8 @@ def load_cube(uris, constraint=None, callback=None):
     if len(constraints) != 1:
         raise ValueError('only a single constraint is allowed')
 
-    cubes = _load_collection(uris, constraints, callback).merged().cubes()
+    cubes = _load_collection(uris, constraints, callback)
+    cubes = cubes.merged().cubes()
 
     try:
         cube = cubes.merge_cube()
@@ -411,12 +449,39 @@ def load_raw(uris, constraints=None, callback=None):
         An :class:`iris.cube.CubeList`.
 
     """
-    return _load_collection(uris, constraints, callback).cubes()
+    from iris.fileformats.um._fast_load import _raw_structured_loading
+    with _raw_structured_loading():
+        return _load_collection(uris, constraints, callback).cubes()
 
 
 save = iris.io.save
 
 
 def sample_data_path(*path_to_join):
-    """Given the sample data resource, returns the full path to the file."""
-    return os.path.join(iris.config.SAMPLE_DATA_DIR, *path_to_join)
+    """
+    Given the sample data resource, returns the full path to the file.
+
+    .. note::
+
+        This function is only for locating files in the iris sample data
+        collection (installed separately from iris). It is not needed or
+        appropriate for general file access.
+
+    """
+    target = os.path.join(*path_to_join)
+    if os.path.isabs(target):
+        raise ValueError('Absolute paths, such as {!r}, are not supported.\n'
+                         'NB. This function is only for locating files in the '
+                         'iris sample data collection. It is not needed or '
+                         'appropriate for general file access.'.format(target))
+    if iris_sample_data is not None:
+        target = os.path.join(iris_sample_data.path, target)
+    else:
+        raise ImportError("Please install the 'iris-sample-data' package to "
+                          "access sample data.")
+    if not glob.glob(target):
+        raise ValueError('Sample data file(s) at {!r} not found.\n'
+                         'NB. This function is only for locating files in the '
+                         'iris sample data collection. It is not needed or '
+                         'appropriate for general file access.'.format(target))
+    return target

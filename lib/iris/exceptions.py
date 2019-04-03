@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2016, Met Office
+# (C) British Crown Copyright 2010 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -21,8 +21,6 @@ Exceptions specific to the Iris package.
 
 from __future__ import (absolute_import, division, print_function)
 from six.moves import (filter, input, map, range, zip)  # noqa
-
-import iris.coords
 
 
 class IrisError(Exception):
@@ -48,6 +46,8 @@ class CellMeasureNotFoundError(KeyError):
 class CoordinateMultiDimError(ValueError):
     """Raised when a routine doesn't support multi-dimensional coordinates."""
     def __init__(self, msg):
+        # N.B. deferred import to avoid a circular import dependency.
+        import iris.coords
         if isinstance(msg, iris.coords.Coord):
             fmt = "Multi-dimensional coordinate not supported: '%s'"
             msg = fmt % msg.name()
@@ -151,4 +151,9 @@ class DuplicateDataError(MergeError):
 
 
 class LazyAggregatorError(Exception):
+    pass
+
+
+class UnitConversionError(IrisError):
+    """Raised when Iris is unable to convert a unit."""
     pass

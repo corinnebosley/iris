@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2017, Met Office
 #
 # This file is part of Iris.
 #
@@ -58,7 +58,6 @@ class PPTest(object):
         """
         # Watch out for a missing reference text file
         if not os.path.isfile(reference_txt_path):
-            tests.logger.warning('Creating result file: %s', reference_txt_path)
             if reference_cubes:
                 temp_pp_path = iris.util.create_temp_filename(".pp")
                 try:
@@ -80,7 +79,6 @@ class PPTest(object):
             pp_fields = list(iris.fileformats.pp.load(temp_pp_path))
             for pp_field in pp_fields:
                 pp_field.data
-
             with open(reference_txt_path, 'r') as reference_fh:
                 reference = ''.join(reference_fh)
             self._assert_str_same(reference + '\n', str(pp_fields) + '\n',

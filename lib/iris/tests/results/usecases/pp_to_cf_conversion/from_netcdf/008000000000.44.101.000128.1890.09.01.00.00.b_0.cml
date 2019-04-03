@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <cubes xmlns="urn:x-iris:cubeml-0.2">
-  <cube units="1" var_name="unknown">
+  <cube dtype="float32" units="1" var_name="m__s44i101">
     <attributes>
       <attribute name="Conventions" value="CF-1.5"/>
       <attribute name="STASH" value="m??s44i101"/>
@@ -29,6 +29,6 @@
         <coord interval="24 hour" name="time"/>
       </cellMethod>
     </cellMethods>
-    <data checksum="0x6475db6b" dtype="float32" shape="(20, 16)"/>
+    <data checksum="0x6475db6b" dtype="float32" mask_checksum="no-masked-elements" shape="(20, 16)"/>
   </cube>
 </cubes>

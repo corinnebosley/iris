@@ -1,22 +1,15 @@
 from __future__ import print_function
 
-import contextlib
-from distutils.command import build_ext, build_py
-from distutils.core import setup, Command
-from distutils.sysconfig import get_config_var
+from contextlib import contextmanager
 from distutils.util import convert_path
-import fnmatch
-import multiprocessing
 import os
+from shutil import copyfile
 import sys
+import textwrap
 
-import numpy as np
-import setuptools
-
-# Add full path so Python doesn't load any __init__.py in the intervening
-# directories, thereby saving setup.py from additional dependencies.
-sys.path.append('lib/iris/tests/runner')
-from _runner import TestRunner
+from setuptools import setup, Command
+from setuptools.command.develop import develop as develop_cmd
+from setuptools.command.build_py import build_py
 
 
 # Returns the package and all its sub-packages
@@ -38,7 +31,7 @@ def find_package_tree(root_path, root_package):
         if dir_names:
             prefix = dir_path.split(os.path.sep)[root_count:]
             packages.extend(['.'.join([root_package] + prefix + [dir_name])
-                                for dir_name in dir_names])
+                             for dir_name in dir_names])
     return packages
 
 
@@ -55,24 +48,50 @@ def file_walk_relative(top, remove=''):
             yield os.path.join(root, file).replace(remove, '')
 
 
-def std_name_cmd(target_dir):
-    script_path = os.path.join('tools', 'generate_std_names.py')
-    xml_path = os.path.join('etc', 'cf-standard-name-table.xml')
-    module_path = os.path.join(target_dir, 'iris', 'std_names.py')
-    cmd = (sys.executable, script_path, xml_path, module_path)
-    return cmd
+@contextmanager
+def temporary_path(directory):
+    """
+    Context manager that adds and subsequently removes the given directory
+    to sys.path
+
+    """
+    sys.path.insert(0, directory)
+    try:
+        yield
+    finally:
+        del sys.path[0]
 
 
-class SetupTestRunner(TestRunner, setuptools.Command):
+# Add full path so Python doesn't load any __init__.py in the intervening
+# directories, thereby saving setup.py from additional dependencies.
+with temporary_path('lib/iris/tests/runner'):
+    from _runner import TestRunner  # noqa:
+
+SETUP_DIR = os.path.dirname(__file__)
+
+def pip_requirements(name):
+    fname = os.path.join(SETUP_DIR, 'requirements', '{}.txt'.format(name))
+    if not os.path.exists(fname):
+        raise RuntimeError('Unable to find the {} requirements file at {}'
+                           ''.format(name, fname))
+    reqs = []
+    with open(fname, 'r') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            reqs.append(line)
+    return reqs
+
+
+class SetupTestRunner(TestRunner, Command):
     pass
 
 
-class CleanSource(Command):
-    """
-    Removes orphaned pyc/pyo files from the sources.
+class BaseCommand(Command):
+    """A valid no-op command for setuptools & distutils."""
 
-    """
-    description = 'clean orphaned pyc/pyo files from sources'
+    description = 'A no-op command.'
     user_options = []
 
     def initialize_options(self):
@@ -80,6 +99,13 @@ class CleanSource(Command):
 
     def finalize_options(self):
         pass
+
+    def run(self):
+        pass
+
+
+class CleanSource(BaseCommand):
+    description = 'clean orphaned pyc/pyo files from the source directory'
 
     def run(self):
         for root_path, dir_names, file_names in os.walk('lib'):
@@ -92,98 +118,90 @@ class CleanSource(Command):
                         os.remove(compiled_path)
 
 
-class MakeStdNames(Command):
+def compile_pyke_rules(cmd, directory):
+    # Call out to the python executable to pre-compile the Pyke rules.
+    # Significant effort was put in to trying to get these to compile
+    # within this build process but there was no obvious way of finding
+    # a workaround to the issue presented in
+    # https://github.com/SciTools/iris/issues/2481.
+
+    shelled_code = textwrap.dedent("""\
+
+    import os
+
+    # Monkey patch the load method to avoid "ModuleNotFoundError: No module
+    # named 'iris.fileformats._pyke_rules.compiled_krb'". In this instance
+    # we simply don't want the knowledge engine, so we turn the load method
+    # into a no-op.
+    from pyke.target_pkg import target_pkg
+    target_pkg.load = lambda *args, **kwargs: None
+
+    # Compile the rules by hand, without importing iris. That way we can
+    # avoid the need for all of iris' dependencies being installed.
+    os.chdir(os.path.join('{bld_dir}', 'iris', 'fileformats', '_pyke_rules'))
+    
+    # Import pyke *after* changing directory. Without this we get the compiled
+    # rules in the wrong place. Identified in
+    # https://github.com/SciTools/iris/pull/2891#issuecomment-341404187
+    from pyke import knowledge_engine
+    knowledge_engine.engine('')
+
+    """.format(bld_dir=directory)).split('\n')
+    shelled_code = '; '.join(
+        [line for line in shelled_code
+         if not line.strip().startswith('#') and line.strip()])
+    args = [sys.executable, '-c', shelled_code]
+    cmd.spawn(args)
+
+
+def copy_copyright(cmd, directory):
+    # Copy the COPYRIGHT information into the package root
+    iris_build_dir = os.path.join(directory, 'iris')
+    for fname in ['COPYING', 'COPYING.LESSER']:
+        copyfile(fname, os.path.join(iris_build_dir, fname))
+
+
+def build_std_names(cmd, directory):
+    # Call out to tools/generate_std_names.py to build std_names module.
+
+    script_path = os.path.join('tools', 'generate_std_names.py')
+    xml_path = os.path.join('etc', 'cf-standard-name-table.xml')
+    module_path = os.path.join(directory, 'iris', 'std_names.py')
+    args = (sys.executable, script_path, xml_path, module_path)
+
+    cmd.spawn(args)
+
+
+def custom_cmd(command_to_override, functions, help_doc=""):
     """
-    Generates the CF standard name module containing mappings from
-    CF standard name to associated metadata.
-
-    """
-    description = "generate CF standard name module"
-    user_options = []
-
-    def initialize_options(self):
-        pass
-
-    def finalize_options(self):
-        pass
-
-    def run(self):
-        cmd = std_name_cmd('lib')
-        self.spawn(cmd)
-
-
-class MakePykeRules(Command):
-    """
-    Compile the PyKE CF-NetCDF loader rule base.
-
-    """
-    description = "compile CF-NetCDF loader rule base"
-    user_options = []
-
-    def initialize_options(self):
-        pass
-
-    def finalize_options(self):
-        pass
-
-    @staticmethod
-    def _pyke_rule_compile():
-        """Compile the PyKE rule base."""
-        from pyke import knowledge_engine
-        import iris.fileformats._pyke_rules
-        knowledge_engine.engine(iris.fileformats._pyke_rules)
-
-    def run(self):
-        # Compile the PyKE rules.
-        MakePykeRules._pyke_rule_compile()
-
-
-class MissingHeaderError(Exception):
-    """
-    Raised when one or more files do not have the required copyright
-    and licence header.
-
-    """
-    pass
-
-
-class BuildPyWithExtras(build_py.build_py):
-    """
-    Adds the creation of the CF standard names module and compilation
-    of the PyKE rules to the standard "build_py" command.
+    Allows command specialisation to include calls to the given functions.
 
     """
-    @contextlib.contextmanager
-    def temporary_path(self):
-        """
-        Context manager that adds and subsequently removes the build
-        directory to the beginning of the module search path.
+    class ExtendedCommand(command_to_override):
+        description = help_doc or command_to_override.description
 
-        """
-        sys.path.insert(0, self.build_lib)
-        try:
-            yield
-        finally:
-            del sys.path[0]
+        def run(self):
+            # Run the original command first to make sure all the target
+            # directories are in place.
+            command_to_override.run(self)
 
-    def run(self):
-        # Run the main build command first to make sure all the target
-        # directories are in place.
-        build_py.build_py.run(self)
+            # build_lib is defined if we are building the package. Otherwise
+            # we want to to the work in-place.
+            dest = getattr(self, 'build_lib', None)
+            if dest is None:
+                print(' [Running in-place]')
+                # Pick the source dir instead (currently in the sub-dir "lib")
+                dest = 'lib'
 
-        # Now build the std_names module.
-        cmd = std_name_cmd(self.build_lib)
-        self.spawn(cmd)
+            for func in functions:
+                func(self, dest)
 
-        # Compile the PyKE rules.
-        with self.temporary_path():
-            MakePykeRules._pyke_rule_compile()
+    return ExtendedCommand
 
 
 def extract_version():
     version = None
-    fdir = os.path.dirname(__file__)
-    fnme = os.path.join(fdir, 'lib', 'iris', '__init__.py')
+    fnme = os.path.join(SETUP_DIR, 'lib', 'iris', '__init__.py')
     with open(fnme) as fd:
         for line in fd:
             if (line.startswith('__version__')):
@@ -193,38 +211,51 @@ def extract_version():
     return version
 
 
+custom_commands = {
+    'test': SetupTestRunner,
+    'develop': custom_cmd(
+        develop_cmd, [build_std_names, compile_pyke_rules]),
+    'build_py': custom_cmd(
+        build_py,
+        [build_std_names, compile_pyke_rules, copy_copyright]),
+    'std_names':
+        custom_cmd(BaseCommand, [build_std_names],
+                   help_doc="generate CF standard name module"),
+    'pyke_rules':
+        custom_cmd(BaseCommand, [compile_pyke_rules],
+                   help_doc="compile CF-NetCDF loader rules"),
+    'clean_source': CleanSource,
+    }
+
+
+pypi_name = 'scitools-iris'
+
+with open(os.path.join(SETUP_DIR, 'README.md'), 'r') as fh:
+    description = ''.join(fh.readlines())
+
 setup(
-    name='Iris',
+    name=pypi_name,
     version=extract_version(),
     url='http://scitools.org.uk/iris/',
     author='UK Met Office',
-
+    author_email='scitools-iris-dev@googlegroups.com',
+    description="A powerful, format-agnostic, community-driven Python "
+                "library for analysing and visualising Earth science data",
+    long_description=description,
+    long_description_content_type='text/markdown',
     packages=find_package_tree('lib/iris', 'iris'),
     package_dir={'': 'lib'},
-    package_data={
-        'iris': list(file_walk_relative('lib/iris/etc', remove='lib/iris/')) + \
-                list(file_walk_relative('lib/iris/tests/results',
-                                        remove='lib/iris/')) + \
-                ['fileformats/_pyke_rules/*.k?b'] + \
-                ['tests/stock*.npz']
-        },
-    data_files=[('iris', ['CHANGES', 'COPYING', 'COPYING.LESSER'])],
-    tests_require=['nose'],
-    features={
-        'unpack': setuptools.Feature(
-            "use of UKMO unpack library",
-            standard=False,
-            ext_modules=[
-                setuptools.Extension(
-                    'iris.fileformats.pp_packing',
-                    ['src/iris/fileformats/pp_packing/pp_packing.c'],
-                    libraries=['mo_unpack'],
-                    include_dirs=[np.get_include()]
-                )
-            ]
-        )
-    },
-    cmdclass={'test': SetupTestRunner, 'build_py': BuildPyWithExtras,
-              'std_names': MakeStdNames, 'pyke_rules': MakePykeRules,
-              'clean_source': CleanSource},
+    include_package_data=True,
+    cmdclass=custom_commands,
+
+    zip_safe=False,
+
+    setup_requires=pip_requirements('setup'),
+    install_requires=pip_requirements('setup') + pip_requirements('core'),
+    tests_require=['{}[test]'.format(pypi_name)],
+    extras_require = {
+                      'test': pip_requirements('test'),
+                      'all': pip_requirements('all'),
+                      'extensions': pip_requirements('extensions'),
+                      },
 )

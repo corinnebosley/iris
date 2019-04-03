@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <cubes xmlns="urn:x-iris:cubeml-0.2">
-  <cube standard_name="air_temperature" units="kelvin" var_name="cube_0">
+  <cube dtype="int32" standard_name="air_temperature" units="kelvin" var_name="cube_0">
     <coords>
       <coord>
         <dimCoord id="f1596e20" points="[100]" shape="(1,)" standard_name="height" units="Unit('meters')" value_type="int32" var_name="height"/>
@@ -14,6 +14,6 @@
       </coord>
     </coords>
     <cellMethods/>
-    <data checksum="0xff4e3e81" dtype="int32" shape="(5,)"/>
+    <data checksum="0xff4e3e81" dtype="int32" mask_checksum="no-masked-elements" shape="(5,)"/>
   </cube>
 </cubes>

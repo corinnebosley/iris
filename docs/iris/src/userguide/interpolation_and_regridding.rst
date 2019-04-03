@@ -5,6 +5,8 @@
 
   import numpy as np
   import iris
+  import warnings
+  warnings.simplefilter('ignore')
 
 =================================
 Cube interpolation and regridding
@@ -17,10 +19,12 @@ upon existing interpolation schemes implemented by SciPy.
 In Iris we refer to the avaliable types of interpolation and regridding as
 `schemes`. The following are the interpolation schemes that are currently
 available in Iris:
+
  * linear interpolation (:class:`iris.analysis.Linear`), and
  * nearest-neighbour interpolation (:class:`iris.analysis.Nearest`).
 
 The following are the regridding schemes that are currently available in Iris:
+
  * linear regridding (:class:`iris.analysis.Linear`),
  * nearest-neighbour regridding (:class:`iris.analysis.Nearest`), and
  * area-weighted regridding (:class:`iris.analysis.AreaWeighted`, first-order conservative).
@@ -33,6 +37,7 @@ Interpolation
 
 Interpolating a cube is achieved with the :meth:`~iris.cube.Cube.interpolate`
 method. This method expects two arguments:
+
  #. the sample points to interpolate, and
  #. the second argument being the interpolation scheme to use.
 
@@ -41,13 +46,15 @@ The result is a new cube, interpolated at the sample points.
 Sample points must be defined as an iterable of ``(coord, value(s))`` pairs.
 The `coord` argument can be either a coordinate name or coordinate instance.
 The specified coordinate must exist on the cube being interpolated! For example:
+
  * coordinate names and scalar sample points: ``[('latitude', 51.48), ('longitude', 0)]``,
  * a coordinate instance and a scalar sample point: ``[(cube.coord('latitude'), 51.48)]``, and
  * a coordinate name and a NumPy array of sample points: ``[('longitude', np.linspace(-11, 2, 14))]``
+
 are all examples of valid sample points.
 
 The values for coordinates that correspond to date/times can be supplied as
-datetime.datetime or netcdftime.datetime instances,
+datetime.datetime or cftime.datetime instances,
 e.g. ``[('time', datetime.datetime(2009, 11, 19, 10, 30))]``).
 
 Let's take the air temperature cube we've seen previously:
@@ -123,7 +130,8 @@ For instance, the :class:`iris.analysis.Linear` scheme requires 1D numeric,
 monotonic, coordinates. Supposing we have a single column cube such as
 the one defined below:
 
-    >>> column = iris.load_cube(iris.sample_data_path('hybrid_height.nc'))[:, 0, 0]
+    >>> cube = iris.load_cube(iris.sample_data_path('hybrid_height.nc'), 'air_potential_temperature')
+    >>> column = cube[:, 0, 0]
     >>> print(column.summary(shorten=True))
     air_potential_temperature / (K)     (model_level_number: 15)
 
@@ -131,9 +139,9 @@ This cube has a "hybrid-height" vertical coordinate system, meaning that the ver
 coordinate is unevenly spaced in altitude:
 
    >>> print(column.coord('altitude').points)
-   [  418.69836426   434.57049561   456.79278564   485.3664856    520.29327393
-      561.57519531   609.21447754   663.21411133   723.57696533   790.30664062
-      863.40722656   942.88232422  1028.73706055  1120.97644043  1219.60510254]
+   [ 418.69836  434.5705   456.7928   485.3665   520.2933   561.5752
+     609.2145   663.2141   723.57697  790.30664  863.4072   942.8823
+    1028.737   1120.9764  1219.6051 ]
 
 We could regularise the vertical coordinate by defining 10 equally spaced altitude
 sample points between 400 and 1250 and interpolating our vertical coordinate onto
@@ -162,6 +170,7 @@ extrapolating values makes little physical sense.
 The extrapolation mode is controlled by the ``extrapolation_mode`` keyword.
 For the available interpolation schemes available in Iris, the ``extrapolation_mode``
 keyword must be one of:
+
  * ``extrapolate`` -- the extrapolation points will be calculated by extending the gradient of the closest two points,
  * ``error`` -- a ValueError exception will be raised, notifying an attempt to extrapolate,
  * ``nan`` -- the extrapolation points will be be set to NaN,
@@ -176,8 +185,8 @@ For example, to mask values that lie beyond the range of the original data:
    >>> scheme = iris.analysis.Linear(extrapolation_mode='mask')
    >>> new_column = column.interpolate(sample_points, scheme)
    >>> print(new_column.coord('altitude').points)
-   [           nan   494.44451904   588.88891602   683.33325195   777.77783203
-      872.222229     966.66674805  1061.11108398  1155.55541992            nan]
+   [       nan  494.44452  588.8889   683.33325  777.77783  872.2222
+     966.66675 1061.1111  1155.5554         nan]
 
 
 .. _caching_an_interpolator:
@@ -192,6 +201,7 @@ intensive part of an interpolation is setting up the interpolator.
 
 To cache an interpolator you must set up an interpolator scheme and call the
 scheme's interpolator method. The interpolator method takes as arguments:
+
  #. a cube to be interpolated, and
  #. an iterable of coordinate names or coordinate instances of the coordinates that are to be interpolated over.
 
@@ -229,6 +239,7 @@ regridding is based on the **horizontal** grid of *another cube*.
 
 Regridding a cube is achieved with the :meth:`cube.regrid() <iris.cube.Cube.regrid>` method.
 This method expects two arguments: 
+
  #. *another cube* that defines the target grid onto which the cube should be regridded, and
  #. the regridding scheme to use.
 
@@ -262,9 +273,12 @@ mode when defining the regridding scheme.
 
 For the available regridding schemes in Iris, the ``extrapolation_mode`` keyword
 must be one of:
+
  * ``extrapolate`` --
+
     * for :class:`~iris.analysis.Linear` the extrapolation points will be calculated by extending the gradient of the closest two points.
     * for :class:`~iris.analysis.Nearest` the extrapolation points will take their value from the nearest source point.
+
  * ``nan`` -- the extrapolation points will be be set to NaN.
  * ``error`` -- a ValueError exception will be raised, notifying an attempt to extrapolate.
  * ``mask`` -- the extrapolation points will always be masked, even if the source data is not a MaskedArray.
@@ -376,6 +390,7 @@ intensive part of a regrid is setting up the regridder.
 
 To cache a regridder you must set up a regridder scheme and call the
 scheme's regridder method. The regridder method takes as arguments:
+
  #. a cube (that is to be regridded) defining the source grid, and
  #. a cube defining the target grid to regrid the source cube to.
 

@@ -1,4 +1,4 @@
-# (C) British Crown Copyright 2010 - 2015, Met Office
+# (C) British Crown Copyright 2010 - 2018, Met Office
 #
 # This file is part of Iris.
 #
@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with Iris.  If not, see <http://www.gnu.org/licenses/>.
 """
-Provides the capability to load netCDF files and interprete them
+Provides the capability to load netCDF files and interpret them
 according to the 'NetCDF Climate and Forecast (CF) Metadata Conventions'.
 
 References:
@@ -39,6 +39,7 @@ import netCDF4
 import numpy as np
 import numpy.ma as ma
 
+from iris._deprecation import warn_deprecated
 import iris.util
 
 
@@ -72,7 +73,7 @@ reference_terms = dict(atmosphere_sigma_coordinate=['ps'],
 
 # NetCDF returns a different type for strings depending on Python version.
 def _is_str_dtype(var):
-    return ((six.PY2 and np.issubdtype(var.dtype, np.str)) or
+    return ((six.PY2 and np.issubdtype(var.dtype, np.str_)) or
             (six.PY3 and np.issubdtype(var.dtype, np.bytes_)))
 
 
@@ -486,8 +487,8 @@ class CFCoordinateVariable(CFVariable):
             # String variables can't be coordinates
             if _is_str_dtype(nc_var):
                 continue
-            # Restrict to one-dimensional with name as dimension OR zero-dimensional scalar
-            if not ((nc_var.ndim == 1 and nc_var_name in nc_var.dimensions) or (nc_var.ndim == 0)):
+            # Restrict to one-dimensional with name as dimension
+            if not (nc_var.ndim == 1 and nc_var_name in nc_var.dimensions):
                 continue
             # Restrict to monotonic?
             if monotonic:
@@ -677,13 +678,16 @@ class CFLabelVariable(CFVariable):
         str_dim_name = str_dim_name[0]
         label_data = self[:]
 
-        if isinstance(label_data, ma.MaskedArray):
+        if ma.isMaskedArray(label_data):
             label_data = label_data.filled()
 
         # Determine whether we have a string-valued scalar label
         # i.e. a character variable that only has one dimension (the length of the string).
         if self.ndim == 1:
-            data = np.array([''.join(label_data).strip()])
+            label_string = b''.join(label_data).strip()
+            if six.PY3:
+                label_string = label_string.decode('utf8')
+            data = np.array([label_string])
         else:
             # Determine the index of the string dimension.
             str_dim = self.dimensions.index(str_dim_name)
@@ -1004,9 +1008,14 @@ class CFReader(object):
             for variable_type in self._variable_types:
                 # Prevent grid mapping variables being mis-identified as
                 # CF coordinate variables.
-                ignore = None if issubclass(variable_type, CFGridMappingVariable) else coordinate_names
-                match = variable_type.identify(self._dataset.variables, ignore=ignore,
-                                               target=cf_variable.cf_name, warn=False)
+                if issubclass(variable_type, CFGridMappingVariable):
+                    ignore = None
+                else:
+                    ignore = coordinate_names
+                match = variable_type.identify(self._dataset.variables,
+                                               ignore=ignore,
+                                               target=cf_variable.cf_name,
+                                               warn=False)
                 # Sanity check dimensionality coverage.
                 for cf_name, cf_var in six.iteritems(match):
                     if cf_var.spans(cf_variable):
@@ -1026,7 +1035,8 @@ class CFReader(object):
             # Build CF data variable relationships.
             if isinstance(cf_variable, CFDataVariable):
                 # Add global netCDF attributes.
-                cf_group.global_attributes.update(self.cf_group.global_attributes)
+                cf_group.global_attributes.update(
+                    self.cf_group.global_attributes)
                 # Add appropriate "dimensioned" CF coordinate variables.
                 cf_group.update({cf_name: self.cf_group[cf_name] for cf_name
                                     in cf_variable.dimensions if cf_name in
@@ -1039,7 +1049,8 @@ class CFReader(object):
                 # Add appropriate formula terms.
                 for cf_var in six.itervalues(self.cf_group.formula_terms):
                     for cf_root in cf_var.cf_terms_by_root:
-                        if cf_root in cf_group and cf_var.cf_name not in cf_group:
+                        if (cf_root in cf_group and
+                                cf_var.cf_name not in cf_group):
                             # Sanity check dimensionality.
                             if cf_var.spans(cf_variable):
                                 cf_group[cf_var.cf_name] = cf_var
@@ -1069,42 +1080,38 @@ class CFReader(object):
             _build(cf_variable)
 
         # Determine whether there are any formula terms that
-        # may be promoted to a CFDataVariable.
-        if iris.FUTURE.netcdf_promote:
-            # Restrict promotion to only those formula terms
-            # that are reference surface/phenomenon.
-            for cf_var in six.itervalues(self.cf_group.formula_terms):
-                for cf_root, cf_term in six.iteritems(cf_var.cf_terms_by_root):
-                    cf_root_var = self.cf_group[cf_root]
-                    name = cf_root_var.standard_name or cf_root_var.long_name
-                    terms = reference_terms.get(name, [])
-                    if isinstance(terms, six.string_types) or \
-                            not isinstance(terms, Iterable):
-                        terms = [terms]
-                    cf_var_name = cf_var.cf_name
-                    if cf_term in terms and \
-                            cf_var_name not in self.cf_group.promoted:
-                        data_var = CFDataVariable(cf_var_name, cf_var.cf_data)
-                        self.cf_group.promoted[cf_var_name] = data_var
-                        _build(data_var)
-                        break
-            # Promote any ignored variables.
-            promoted = set()
-            not_promoted = ignored.difference(promoted)
-            while not_promoted:
-                cf_name = not_promoted.pop()
-                if cf_name not in self.cf_group.data_variables and \
-                        cf_name not in self.cf_group.promoted:
-                    data_var = CFDataVariable(cf_name,
-                                              self.cf_group[cf_name].cf_data)
-                    self.cf_group.promoted[cf_name] = data_var
+        # may be promoted to a CFDataVariable and restrict promotion to only
+        # those formula terms that are reference surface/phenomenon.
+        for cf_var in six.itervalues(self.cf_group.formula_terms):
+            for cf_root, cf_term in six.iteritems(cf_var.cf_terms_by_root):
+                cf_root_var = self.cf_group[cf_root]
+                name = cf_root_var.standard_name or cf_root_var.long_name
+                terms = reference_terms.get(name, [])
+                if isinstance(terms, six.string_types) or \
+                        not isinstance(terms, Iterable):
+                    terms = [terms]
+                cf_var_name = cf_var.cf_name
+                if cf_term in terms and \
+                        cf_var_name not in self.cf_group.promoted:
+                    data_var = CFDataVariable(cf_var_name, cf_var.cf_data)
+                    self.cf_group.promoted[cf_var_name] = data_var
                     _build(data_var)
-                # Determine whether there are still any ignored variables
-                # yet to be promoted.
-                promoted.add(cf_name)
-                not_promoted = ignored.difference(promoted)
-        else:
-            _netcdf_promote_warning()
+                    break
+        # Promote any ignored variables.
+        promoted = set()
+        not_promoted = ignored.difference(promoted)
+        while not_promoted:
+            cf_name = not_promoted.pop()
+            if cf_name not in self.cf_group.data_variables and \
+                    cf_name not in self.cf_group.promoted:
+                data_var = CFDataVariable(cf_name,
+                                          self.cf_group[cf_name].cf_data)
+                self.cf_group.promoted[cf_name] = data_var
+                _build(data_var)
+            # Determine whether there are still any ignored variables
+            # yet to be promoted.
+            promoted.add(cf_name)
+            not_promoted = ignored.difference(promoted)
 
 
     def _reset(self):
@@ -1128,12 +1135,3 @@ def _getncattr(dataset, attr, default=None):
     except AttributeError:
         value = default
     return value
-
-
-def _netcdf_promote_warning():
-    msg = ('NetCDF default loading behaviour currently does not expose '
-           'variables which define reference surfaces for dimensionless '
-           'vertical coordinates as independent Cubes. This behaviour is '
-           'deprecated in favour of automatic promotion to Cubes. To switch '
-           'to the new behaviour, set iris.FUTURE.netcdf_promote to True.')
-    warnings.warn(msg)
