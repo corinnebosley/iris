@@ -9,6 +9,7 @@ nc-time-axis
 pandas
 stratify  #conda: python-stratify
 pyugrid
+xarray
 
 #conda: graphviz
 
