@@ -256,6 +256,7 @@ def add(cube, other, dim=None, in_place=False):
 
     """
     _assert_is_cube(cube)
+
     new_dtype = _output_dtype(operator.add, cube.dtype, _get_dtype(other),
                               in_place=in_place)
     if in_place:
@@ -263,8 +264,8 @@ def add(cube, other, dim=None, in_place=False):
         op = operator.iadd
     else:
         op = operator.add
-    return _binary_op_common(op, 'add', cube, other, new_dtype, dim=dim,
-                             in_place=in_place)
+    return _binary_op_common(op, 'add', cube, other, cube.units,
+                             new_dtype=new_dtype, dim=dim, in_place=in_place)
 
 
 def subtract(cube, other, dim=None, in_place=False):
@@ -306,8 +307,8 @@ def subtract(cube, other, dim=None, in_place=False):
         op = operator.isub
     else:
         op = operator.sub
-    return _binary_op_common(op, 'subtract', cube, other, new_dtype,
-                             dim=dim, in_place=in_place)
+    return _binary_op_common(op, 'subtract', cube, other, cube.units,
+                             new_dtype=new_dtype, dim=dim, in_place=in_place)
 
 
 def multiply(cube, other, dim=None, in_place=False):
